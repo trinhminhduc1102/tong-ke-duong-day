@@ -49,6 +49,9 @@ aside input{width:100%;padding:6px 8px;border:1px solid var(--line);border-radiu
 .pi.on{background:var(--acc2)}
 .pi b{display:block;font-weight:600;line-height:1.3}
 .pi small{color:var(--mute);font-size:11px}
+.lhd{display:flex;justify-content:space-between;align-items:center;margin:12px 6px 4px;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--mute);border-bottom:1px solid var(--line);padding-bottom:3px}
+.lhd:first-child{margin-top:2px}
+.lhd span{font-weight:600;background:var(--line2);border-radius:8px;padding:0 6px}
 .empty{color:var(--mute);padding:30px 18px;text-align:center;line-height:1.6}
 #work{flex:1;display:flex;flex-direction:column;min-width:0}
 .ph{padding:12px 16px 0;display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
@@ -305,7 +308,9 @@ class FsFile{
     return {lastModified:e.mtime,size:e.size,async text(){return e.content}}}
   async createWritable(){let buf='';const self=this;return{async write(x){buf+=x},async close(){
     const mtime=Math.max(Date.now(),(fsCache.get(self.path)?.mtime||0)+1);
-    await fdb.collection('files').doc(docId(self.path)).set({path:self.path,dir:self.path.split('/').slice(0,-1).join('/'),content:buf,mtime,by:fbUser?fbUser.uid:''});
+    const rec={path:self.path,dir:self.path.split('/').slice(0,-1).join('/'),content:buf,mtime,by:fbUser?fbUser.uid:''};
+    if(self.path.includes('/projects/')){try{const o=JSON.parse(buf);rec.owner=ownerOf(o)||'';rec.editors=editorsOf(o)}catch(e){rec.owner='';rec.editors=[]}}
+    await fdb.collection('files').doc(docId(self.path)).set(rec);
     fsCache.set(self.path,{content:buf,mtime,size:buf.length})}}}
 }
 class FsDir{
@@ -324,7 +329,7 @@ class FsDir{
 let dirH=null, myName='';
 let projects=[], catalog=null, catMtime=0, curId=null, cur=null, curMtime=0, rows=[], tab='tk';
 let saveTimer=null, saving=false, dirty=false, lastLocalEdit=0, catEditAt=0;
-const canWrite=true;
+let canWrite=true;
 const metaCache={};
 
 const $=s=>document.querySelector(s);
@@ -396,6 +401,11 @@ const isAdmin=()=>me&&me.vaiTro==='quanly'&&me.trangThai==='duyet';
 const TRANG_THAI=['Đang làm','Chờ số liệu','Đang kiểm tra','Đã xong','Tạm dừng'];
 const TT_COLOR={'Đang làm':'#2563eb','Chờ số liệu':'#c2410c','Đang kiểm tra':'#7c3aed','Đã xong':'#15803d','Tạm dừng':'#6b7280'};
 function memberName(idOrName){const m=members.find(x=>x.id===idOrName);return m?m.ten:(legacyNames[idOrName]||idOrName||'')}
+function memberIdOf(x){if(!x)return '';const m=members.find(m=>m.id===x)||members.find(m=>m.ten===x)||(legacyNames[x]?members.find(m=>m.ten===legacyNames[x]):null);return m?m.id:''}
+function ownerOf(p){return p?(p.chuSoHuu||memberIdOf(p.createdBy)):''}
+function editorsOf(p){if(!p||p.isMau)return [];return [...new Set([ownerOf(p),memberIdOf(p.phuTrach)||p.phuTrach].filter(Boolean))]}
+function isMine(p){return !!(p&&me&&editorsOf(p).includes(me.id))}
+function canEditProj(p){return !!(p&&me&&(isAdmin()||isMine(p)))}
 function lockUi(locked){$('#btnNew').disabled=locked;$('#btnImp').disabled=locked;const d=$('#btnDash');if(d)d.disabled=locked;$('#q').disabled=locked;if(locked)$('#plist').innerHTML=''}
 function centerCard(html){$('#work').innerHTML=`<div class="empty" style="margin:50px auto;max-width:460px;text-align:left;color:var(--ink)">${html}</div>`}
 const inpCss='width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);margin-bottom:8px';
@@ -521,11 +531,11 @@ function renderDash(){
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <label class="hint" style="margin:0">Phụ trách</label><select id="dPt" style="padding:5px;border:1px solid var(--line);border-radius:6px;background:var(--panel)"><option value="">Tất cả</option><option value="_none" ${f.pt==='_none'?'selected':''}>(Chưa giao)</option>${members.filter(m=>m.trangThai==='duyet').map(m=>`<option value="${esc(m.id)}" ${f.pt===m.id?'selected':''}>${esc(m.ten)}</option>`).join('')}</select>
       ${f.tt?`<button class="ghost" id="dClr">Bỏ lọc “${esc(f.tt)}”</button>`:''}</div>
-    <table class="lk" style="min-width:980px"><thead><tr><th>Dự án</th><th>Tỉnh</th><th>Giai đoạn</th><th>Phụ trách</th><th>Trạng thái</th><th>Hạn</th><th style="text-align:right">Số VT</th><th style="text-align:right">Chiều dài (m)</th><th>Sửa lần cuối</th></tr></thead><tbody>
-    ${list.map(p=>{const tt=p.trangThai||'Đang làm';const late=p.han&&p.han<today&&tt!=='Đã xong';return `<tr data-open="${esc(p.id)}" style="cursor:pointer">
-      <td><b>${esc(p.name)}</b></td><td>${esc(p.tinh||'')}</td><td>${esc(p.gd||'')}</td><td>${esc(memberName(p.phuTrach))||'<span style="color:var(--mute)">chưa giao</span>'}</td>
+    <table class="lk" style="min-width:1080px"><thead><tr><th>Dự án</th><th>Người tạo</th><th>Tỉnh</th><th>Giai đoạn</th><th>Phụ trách</th><th>Trạng thái</th><th>Hạn</th><th style="text-align:right">Số VT</th><th style="text-align:right">Chiều dài (m)</th><th>Sửa lần cuối</th></tr></thead><tbody>
+    ${[['Dự án của tôi',list.filter(isMine)],['Dự án chung của tổ',list.filter(p=>!isMine(p))]].map(([lb,ls])=>`<tr><td colspan="10" style="background:var(--line2);font-weight:700;font-size:12px">${lb} <span style="font-weight:500;color:var(--mute)">(${ls.length})</span></td></tr>`+(ls.map(p=>{const tt=p.trangThai||'Đang làm';const late=p.han&&p.han<today&&tt!=='Đã xong';return `<tr data-open="${esc(p.id)}" style="cursor:pointer">
+      <td><b>${esc(p.name)}</b></td><td>${esc(memberName(ownerOf(p)||p.createdBy))}</td><td>${esc(p.tinh||'')}</td><td>${esc(p.gd||'')}</td><td>${esc(memberName(p.phuTrach))||'<span style="color:var(--mute)">chưa giao</span>'}</td>
       <td><span style="color:${TT_COLOR[tt]};font-weight:600">${esc(tt)}</span></td><td style="${late?'color:var(--warn);font-weight:600':''}">${p.han?new Date(p.han).toLocaleDateString('vi-VN'):''}${late?' (quá hạn)':''}</td>
-      <td class="num">${p.nRows||0}</td><td class="num">${fmt(p.len||0,1)}</td><td>${esc(memberName(p.updatedBy))} · ${fmtTime(p.updatedAt)}</td></tr>`}).join('')||'<tr><td colspan="9" class="empty">Không có dự án nào.</td></tr>'}
+      <td class="num">${p.nRows||0}</td><td class="num">${fmt(p.len||0,1)}</td><td>${esc(memberName(p.updatedBy))} · ${fmtTime(p.updatedAt)}</td></tr>`}).join('')||'<tr><td colspan="10" class="empty">Không có dự án nào.</td></tr>')).join('')}
     </tbody></table>
     <h3 style="font-size:13px;margin:20px 0 8px">Theo thành viên</h3>
     <table class="lk" style="min-width:600px"><thead><tr><th>Thành viên</th>${TRANG_THAI.map(t=>`<th style="text-align:right">${esc(t)}</th>`).join('')}<th style="text-align:right">Tổng</th></tr></thead><tbody>
@@ -581,7 +591,7 @@ async function loadList(){
       const f=await h.getFile(); const c=metaCache[name];
       if(c&&c.mtime===f.lastModified){out.push(c.meta);continue}
       const d=JSON.parse(await f.text());
-      const meta={id:name.slice(0,-5),name:d.name,tinh:d.tinh,cdt:d.cdt,gd:d.gd,gc:d.gc,updatedAt:d.updatedAt,updatedBy:d.updatedBy,createdBy:d.createdBy,phuTrach:d.phuTrach,trangThai:d.trangThai,han:d.han,isMau:!!d.isMau,len:(d.rows||[]).reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),nRows:(d.rows||[]).filter(r=>r.type!=='sec'&&(r.cot||r.vt)).length,mtime:f.lastModified};
+      const meta={id:name.slice(0,-5),name:d.name,tinh:d.tinh,cdt:d.cdt,gd:d.gd,gc:d.gc,updatedAt:d.updatedAt,updatedBy:d.updatedBy,createdBy:d.createdBy,chuSoHuu:d.chuSoHuu,phuTrach:d.phuTrach,trangThai:d.trangThai,han:d.han,isMau:!!d.isMau,len:(d.rows||[]).reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),nRows:(d.rows||[]).filter(r=>r.type!=='sec'&&(r.cot||r.vt)).length,mtime:f.lastModified};
       metaCache[name]={mtime:f.lastModified,meta}; out.push(meta);
     }catch(e){out.push({id:name.slice(0,-5),name:name+' (file lỗi)',broken:true})}
   }
@@ -609,9 +619,14 @@ function renderList(){
   if(!projects.length){$('#plist').innerHTML='<div class="empty">Chưa có dự án nào.<br>Bấm <b>+ Tạo dự án</b> để bắt đầu.</div>';return}
   const item=p=>`<div class="pi ${p.id===curId?'on':''}" data-id="${esc(p.id)}">
     <b>${p.isMau?'<span class="badge">MẪU</span> ':''}${esc(p.name||'(chưa đặt tên)')}</b>
-    <small>${p.isMau?'':`<span style="color:${TT_COLOR[p.trangThai||'Đang làm']}">${esc(p.trangThai||'Đang làm')}</span> · `}${p.phuTrach?esc(memberName(p.phuTrach))+' · ':''}${p.nRows||0} VT · ${fmtTime(p.updatedAt)}</small></div>`;
+    <small>${p.isMau?'':`<span style="color:${TT_COLOR[p.trangThai||'Đang làm']}">${esc(p.trangThai||'Đang làm')}</span> · `}${!p.isMau&&!isMine(p)&&(ownerOf(p)||p.createdBy)?'của '+esc(memberName(ownerOf(p)||p.createdBy))+' · ':''}${p.nRows||0} VT · ${fmtTime(p.updatedAt)}</small></div>`;
   const mau=list.filter(p=>p.isMau), real=list.filter(p=>!p.isMau);
-  $('#plist').innerHTML=(real.map(item).join('')||'<div class="empty">Không tìm thấy.</div>')+(mau.length?`<div class="hint" style="margin:12px 6px 4px;font-weight:600">Dự án mẫu</div>`+mau.map(item).join(''):'');
+  const mine=real.filter(isMine), team=real.filter(p=>!isMine(p));
+  const hd=(t,n)=>`<div class="lhd">${t}<span>${n}</span></div>`;
+  $('#plist').innerHTML=(!real.length&&!mau.length?'<div class="empty">Không tìm thấy.</div>':'')
+    +hd('Dự án của tôi',mine.length)+(mine.map(item).join('')||'<div class="hint" style="margin:2px 8px 6px">Chưa có – bấm <b>+ Tạo dự án</b>.</div>')
+    +hd('Dự án chung của tổ',team.length)+(team.map(item).join('')||'<div class="hint" style="margin:2px 8px 6px">Không có.</div>')
+    +(mau.length?hd('Dự án mẫu',mau.length)+mau.map(item).join(''):'');
 }
 $('#q').addEventListener('input',renderList);
 $('#plist').addEventListener('click',e=>{const el=e.target.closest('.pi'); if(el) openProject(el.dataset.id)});
@@ -661,20 +676,20 @@ function projectForm(p){
       extraColsCopy=(data.extraCols||[]).map(x=>({...x}));
       if(bg.querySelector('#f_mrows').checked) newRows=(data.rows||[]).map(r=>({...r,id:uid()}));}catch(e){showErr(bg,'Không đọc được dự án mẫu: '+e.message);return false}}
     const fh=await pd.getFileHandle(id+'.json',{create:true});
-    await writeJson(fh,{id,...meta,isMau:false,createdAt:Date.now(),createdBy:me?.id||myName,updatedAt:Date.now(),updatedBy:me?.id||myName,rows:newRows,thietBi,extraCols:extraColsCopy});
+    await writeJson(fh,{id,...meta,isMau:false,chuSoHuu:me?.id||'',createdAt:Date.now(),createdBy:me?.id||myName,updatedAt:Date.now(),updatedBy:me?.id||myName,rows:newRows,thietBi,extraCols:extraColsCopy});
     await loadList(); openProject(id);
   });
   const fm=bgf.querySelector('#f_mau'); if(fm) fm.onchange=()=>{bgf.querySelector('#f_maubox').style.display=fm.value?'':'none'};
 }
 
 /* ---------------- Mở dự án ---------------- */
-function closeProject(){curId=null;cur=null;rows=[];rebuildCols();renderDash()}
+function closeProject(){canWrite=true;curId=null;cur=null;rows=[];rebuildCols();renderDash()}
 async function openProject(id){
   if(dirty) await flushSave();
   try{
     const fh=await (await pdir()).getFileHandle(id+'.json');
     const {data,mtime}=await readJson(fh);
-    curId=id; curMtime=mtime; cur={...data,id}; cur.thietBi=normCat(cur.thietBi); rows=normRows(data.rows||[]); delete cur.rows; dirty=false; rebuildCols();
+    curId=id; curMtime=mtime; cur={...data,id}; cur.thietBi=normCat(cur.thietBi); rows=normRows(data.rows||[]); delete cur.rows; dirty=false; canWrite=canEditProj(cur); rebuildCols();
   }catch(e){toast('Không mở được dự án: '+e.message);return}
   renderList();
   $('#work').innerHTML=`<div class="ph"></div><div class="tabs">
@@ -690,9 +705,15 @@ function renderHead(){
    <div class="act">${cur.isMau?'<button class="pri" id="bFromMau">+ Tạo dự án từ mẫu này</button>':''}<button id="bImp">Nhập Excel</button><button id="bEdit">Sửa thông tin</button><button id="bDup">Nhân bản</button><button id="bXlsx">Xuất Excel</button><button id="bDel" class="danger">Xoá</button></div>`;
   $('#bEdit').onclick=()=>projectForm(cur);
   const fmb=$('#bFromMau'); if(fmb) fmb.onclick=()=>{projectForm(null);setTimeout(()=>{const sel=document.querySelector('#f_mau');if(sel){sel.value=curId;sel.onchange()}},50)};
-  const canDel=isAdmin()||!cur.createdBy||cur.createdBy===me?.id||cur.createdBy===me?.ten;
+  canWrite=canEditProj(cur);
+  const own=ownerOf(cur);
+  const canDel=isAdmin()||(!!me&&own===me.id);
+  if(!canWrite){['#bEdit','#bImp'].forEach(x=>{const b=$(x);if(b){b.disabled=true;b.title='Chỉ người tạo / người phụ trách dự án được sửa'}})}
   if(!canDel){$('#bDel').disabled=true;$('#bDel').title='Chỉ người tạo dự án hoặc quản lý tổ được xoá'}
-  if(cur.isMau&&!isAdmin()){['#bEdit','#bImp','#bDel'].forEach(x=>{const b=$(x);if(b)b.disabled=true})}
+  if(!canWrite){const ro=document.createElement('div');ro.className='warnbox';ro.style.cssText='flex-basis:100%;margin:6px 0 0';
+    ro.innerHTML=cur.isMau?'<b>Chỉ xem</b> – đây là dự án mẫu, chỉ quản lý tổ được sửa. Bấm <b>+ Tạo dự án từ mẫu này</b> để làm dự án của bạn.'
+      :`<b>Chỉ xem</b> – dự án của <b>${esc(memberName(own)||memberName(cur.createdBy)||'người khác')}</b>${cur.phuTrach&&memberIdOf(cur.phuTrach)!==own?` (phụ trách: ${esc(memberName(cur.phuTrach))})`:''}. Bạn vẫn xem và xuất Excel được; muốn sửa thì bấm <b>Nhân bản</b> để tạo bản của riêng bạn.`;
+    ph.style.flexWrap='wrap';ph.appendChild(ro)}
   $('#bImp').onclick=()=>importDialog();
   $('#bDup').onclick=dupProject;
   $('#bXlsx').onclick=exportXlsx;
@@ -703,15 +724,16 @@ function renderHead(){
 async function dupProject(){
   if(dirty) await flushSave();
   const id=uid(); const fh=await (await pdir()).getFileHandle(id+'.json',{create:true});
-  await writeJson(fh,{...cur,id,name:cur.name+' (bản sao)',createdAt:Date.now(),createdBy:myName,updatedAt:Date.now(),updatedBy:myName,rows:rows.map(r=>({...r,id:uid()}))});
+  await writeJson(fh,{...cur,id,name:cur.name+' (bản sao)',isMau:false,chuSoHuu:me?.id||'',phuTrach:me?.id||'',trangThai:'Đang làm',createdAt:Date.now(),createdBy:me?.id||myName,updatedAt:Date.now(),updatedBy:me?.id||myName,rows:rows.map(r=>({...r,id:uid()}))});
   await loadList(); openProject(id);
 }
 
 /* ---------------- Lưu ---------------- */
-function scheduleSave(){if(cur&&cur.isMau&&!isAdmin()){toast('Đây là dự án mẫu, chỉ quản lý được sửa – bấm “Tạo dự án từ mẫu này” để làm');return}dirty=true;lastLocalEdit=Date.now();setStatus('Chưa lưu…');clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushSave(),1200)}
+function scheduleSave(){if(cur&&!canWrite){toast(cur.isMau?'Đây là dự án mẫu, chỉ quản lý được sửa – bấm “Tạo dự án từ mẫu này” để làm':'Dự án này không phải của bạn – chỉ xem. Bấm “Nhân bản” để có bản riêng.');return}dirty=true;lastLocalEdit=Date.now();setStatus('Chưa lưu…');clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushSave(),1200)}
 async function flushSave(force){
   clearTimeout(saveTimer);
   if((!dirty&&!force)||!curId) return;
+  if(cur&&!canEditProj(cur)){dirty=false;return}
   if(saving){saveTimer=setTimeout(()=>flushSave(force),500);return}
   saving=true; const id=curId;
   try{
@@ -825,6 +847,7 @@ function renderTab(){
   const pane=$('#pane'); if(!pane) return;
   if(catalog===null){pane.innerHTML='<div class="empty">Đang tải danh mục…</div>';return}
   if(tab==='tk') renderGrid(pane); else if(tab==='cq') renderCq(pane); else if(tab==='tb') renderTb(pane); else if(tab==='lk') renderLk(pane); else renderCat(pane);
+  if(!canWrite&&['tk','cq','tb'].includes(tab)) pane.querySelectorAll('input,select,textarea,button').forEach(el=>{el.disabled=true});
 }
 
 function groupItems(group){let it=effCat().filter(c=>c.nhom===group&&c.ma);if(!it.length&&projCat().length)it=(catalog||[]).filter(c=>c.nhom===group&&c.ma);return it}
@@ -965,7 +988,7 @@ function onKey(e){
 
 /* ---------------- Quản lý cột thiết bị thêm ---------------- */
 function colManager(){
-  if(cur&&cur.isMau&&!isAdmin()){toast('Dự án mẫu chỉ quản lý được sửa');return}
+  if(cur&&!canWrite){toast('Dự án này bạn chỉ được xem');return}
   let list=extraCols().map(e=>({...e}));
   const baseOpts=g=>GROUPS.map(([k,n])=>`<option value="${k}" ${g===k?'selected':''}>${esc(n)}</option>`).join('');
   const used=e=>rows.filter(r=>r.type!=='sec'&&(r['x_'+e.id+'_t']||num(r['x_'+e.id+'_q']))).length;
@@ -1130,7 +1153,7 @@ function bindTbBtns(pane,usedNotListed){
 /* ---------------- Danh mục ---------------- */
 let catTimer=null;
 function renderCat(pane){
-  const items=catalog||[]; const ro=canWrite?'':'disabled';
+  const items=catalog||[]; const ro=true?'':'disabled';
   pane.innerHTML=`<p class="hint">Danh mục chung cho mọi dự án của tổ – mỗi dự án chọn ra các loại mình dùng ở tab <b>Thiết bị dự án</b>. Mã hiệu không được trùng. Hao hụt nhập theo % (VD 1,02).</p>
   <table class="cat" style="min-width:820px"><thead><tr><th style="width:190px">Nhóm</th><th style="width:130px">Mã hiệu</th><th>Tên vật liệu</th><th style="width:80px">Đơn vị</th><th style="width:90px">Hao hụt %</th><th style="width:40px"></th></tr></thead>
   <tbody>${items.map((c,i)=>{const dup=c.ma&&items.findIndex(x=>x.ma===c.ma)!==i;return `<tr>
@@ -1139,16 +1162,16 @@ function renderCat(pane){
     <td><input ${ro} data-ci="${i}" data-k="ten" value="${esc(c.ten)}"></td>
     <td><input ${ro} data-ci="${i}" data-k="dvt" value="${esc(c.dvt)}"></td>
     <td><input ${ro} data-ci="${i}" data-k="hh" value="${esc(c.hh)}" class="n" style="text-align:right"></td>
-    <td>${canWrite?`<button class="ghost" data-cdel="${i}" title="Xoá">✕</button>`:''}</td></tr>`}).join('')}
+    <td>${true?`<button class="ghost" data-cdel="${i}" title="Xoá">✕</button>`:''}</td></tr>`}).join('')}
   ${!items.length?'<tr><td colspan="6" class="empty">Danh mục trống.</td></tr>':''}</tbody></table>
-  <div class="tbar">${canWrite?'<button id="catAdd">+ Thêm mã</button>':''}${!items.length?' <button id="catDef" class="pri">Tạo danh mục mặc định (27 mã theo mẫu Tam Dương)</button>':''}</div>`;
+  <div class="tbar">${true?'<button id="catAdd">+ Thêm mã</button>':''}${!items.length?' <button id="catDef" class="pri">Tạo danh mục mặc định (27 mã theo mẫu Tam Dương)</button>':''}</div>`;
   const tb=pane.querySelector('tbody');
   tb.addEventListener('input',e=>{const el=e.target;if(el.dataset.ci==null)return;catalog[+el.dataset.ci][el.dataset.k]=el.value;saveCat()});
   tb.addEventListener('change',e=>{const el=e.target;if(el.dataset.ci==null)return;catalog[+el.dataset.ci][el.dataset.k]=el.value;saveCat(true)});
   tb.addEventListener('click',e=>{const b=e.target.closest('[data-cdel]');if(!b)return;const i=+b.dataset.cdel;
     modal(`<h3>Xoá mã ${esc(catalog[i].ma)}?</h3><p>Các dự án đang dùng mã này sẽ báo ô cam và không được cộng vào liệt kê.</p>`,()=>{catalog.splice(i,1);saveCat(true);renderCat(pane)},'Xoá')});
   const cd=$('#catDef'); if(cd) cd.onclick=()=>{catalog=DEFAULT_CAT.map(x=>({...x}));saveCat(true);renderCat(pane)};
-  if(canWrite) $('#catAdd').onclick=()=>{catalog.push({nhom:'Chuoi',ma:'',ten:'',dvt:'',hh:''});saveCat(true);renderCat(pane);const ins=pane.querySelectorAll('input[data-k="ma"]');ins[ins.length-1]?.focus()};
+  if(true) $('#catAdd').onclick=()=>{catalog.push({nhom:'Chuoi',ma:'',ten:'',dvt:'',hh:''});saveCat(true);renderCat(pane);const ins=pane.querySelectorAll('input[data-k="ma"]');ins[ins.length-1]?.focus()};
 }
 function saveCat(now){
   catEditAt=Date.now(); clearTimeout(catTimer);
@@ -1358,9 +1381,10 @@ async function importDialog(){
     const res=preview(); if(!res) return false;
     const {rows:newRows,mode,name}=res;
     let target=curId;
+    if(mode!=='new'&&!canWrite){showErr(bg,'Dự án đang mở không phải của bạn nên không nhập vào được – chọn “tạo dự án mới”.');return false}
     if(mode==='new'){
       const id=uid(); const fh=await (await pdir()).getFileHandle(id+'.json',{create:true});
-      await writeJson(fh,{id,name:name||fileName,tinh:'',cdt:'',gd:'',gc:'Nhập từ '+fileName,createdAt:Date.now(),createdBy:myName,updatedAt:Date.now(),updatedBy:myName,rows:[],thietBi:[]});
+      await writeJson(fh,{id,name:name||fileName,tinh:'',cdt:'',gd:'',gc:'Nhập từ '+fileName,chuSoHuu:me?.id||'',phuTrach:me?.id||'',createdAt:Date.now(),createdBy:me?.id||myName,updatedAt:Date.now(),updatedBy:me?.id||myName,rows:[],thietBi:[]});
       await loadList(); await openProject(id); target=id;
     }
     if(dirty) await flushSave();
