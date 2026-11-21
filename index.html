@@ -170,6 +170,7 @@ tr:hover .rowbtns{opacity:1}
     <div class="top">
       <button class="pri" id="btnNew">+ Tạo dự án</button>
       <button id="btnImp">⇪ Nhập từ file Excel…</button>
+      <button id="btnDxf">📐 Nhập mặt cắt dọc (DXF)…</button>
       <button id="btnDash">📊 Theo dõi dự án</button>
       <input id="q" placeholder="Tìm dự án…">
     </div>
@@ -369,7 +370,7 @@ async function readJson(fh){const f=await fh.getFile();return {data:JSON.parse(a
 async function writeJson(fh,obj){const w=await fh.createWritable();await w.write(JSON.stringify(obj,null,1));await w.close();return (await fh.getFile()).lastModified}
 
 function showConnect(reconnectName){
-  $('#btnNew').disabled=true;$('#btnImp').disabled=true;
+  $('#btnNew').disabled=true;$('#btnImp').disabled=true;$('#btnDxf').disabled=true;
   const supported='showDirectoryPicker' in window;
   $('#plist').innerHTML='';
   $('#work').innerHTML=`<div class="empty" style="margin:50px auto;max-width:560px;text-align:left">
@@ -411,7 +412,7 @@ function ownerOf(p){return p?(p.chuSoHuu||memberIdOf(p.createdBy)):''}
 function editorsOf(p){if(!p||p.isMau)return [];return [...new Set([ownerOf(p),memberIdOf(p.phuTrach)||p.phuTrach].filter(Boolean))]}
 function isMine(p){return !!(p&&me&&editorsOf(p).includes(me.id))}
 function canEditProj(p){return !!(p&&me&&(isAdmin()||isMine(p)))}
-function lockUi(locked){$('#btnNew').disabled=locked;$('#btnImp').disabled=locked;const d=$('#btnDash');if(d)d.disabled=locked;$('#q').disabled=locked;if(locked)$('#plist').innerHTML=''}
+function lockUi(locked){$('#btnNew').disabled=locked;$('#btnImp').disabled=locked;$('#btnDxf').disabled=locked;const d=$('#btnDash');if(d)d.disabled=locked;$('#q').disabled=locked;if(locked)$('#plist').innerHTML=''}
 function centerCard(html){$('#work').innerHTML=`<div class="empty" style="margin:50px auto;max-width:460px;text-align:left;color:var(--ink)">${html}</div>`}
 const inpCss='width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);margin-bottom:8px';
 const fbErr=e=>({'auth/invalid-email':'Email không hợp lệ.','auth/user-not-found':'Sai email hoặc mật khẩu.','auth/wrong-password':'Sai email hoặc mật khẩu.','auth/invalid-credential':'Sai email hoặc mật khẩu.','auth/invalid-login-credentials':'Sai email hoặc mật khẩu.','auth/email-already-in-use':'Email này đã đăng ký – hãy đăng nhập.','auth/weak-password':'Mật khẩu cần ít nhất 6 ký tự.','auth/too-many-requests':'Thử sai quá nhiều lần, đợi vài phút rồi thử lại.','auth/network-request-failed':'Không có kết nối mạng.','permission-denied':'Không có quyền truy cập.'}[e.code]||e.message);
@@ -651,6 +652,155 @@ function showErr(bg,msg){let el=bg.querySelector('.ferr');if(!el){el=document.cr
 
 $('#btnNew').onclick=()=>projectForm(null);
 $('#btnImp').onclick=()=>importDialog();
+/* ---------------- Nhập mặt cắt dọc từ AutoCAD (DXF) ---------------- */
+function dxfText(buf){
+  const head=new TextDecoder('latin1').decode(buf.slice(0,60000));
+  const ver=(head.match(/\$ACADVER\s*\r?\n\s*1\s*\r?\n\s*(AC\d+)/)||[])[1]||'';
+  const cp=((head.match(/\$DWGCODEPAGE\s*\r?\n\s*3\s*\r?\n\s*(\S+)/)||[])[1]||'').toUpperCase();
+  if(ver>='AC1021'){try{return new TextDecoder('utf-8',{fatal:true}).decode(buf)}catch(e){}}
+  const enc=cp.includes('1258')?'windows-1258':cp.includes('1252')||!cp?'windows-1252':'windows-1252';
+  return new TextDecoder(enc).decode(buf);
+}
+function dxfClean(s,mtext){
+  s=s.replace(/\\U\+([0-9A-Fa-f]{4})/g,(m,h)=>String.fromCharCode(parseInt(h,16)));
+  if(mtext){s=s.replace(/\\P/g,' ').replace(/\\S([^;]*);/g,(m,a)=>a.replace(/[\^#]/,'/')).replace(/\\[fFHCcTQWApa][^;]*;/g,'').replace(/\\[LlOoKkN~]/g,'').replace(/\\\\/g,'\\').replace(/[{}]/g,'')}
+  s=s.replace(/%%[dD]/g,'°').replace(/%%[cC]/g,'Ø').replace(/%%[pP]/g,'±').replace(/%%[uUoOkK]/g,'').replace(/%%%/g,'%');
+  s=vn(s.replace(/\s+/g,' ').trim());
+  return s.replace(/^M§/,'MĐ').replace(/^§/,'Đ');
+}
+function dxfEntities(txt){
+  const L=txt.split(/\r?\n/), out=[], dims=[]; let sec='', e=null, expectSec=false;
+  const flush=()=>{if(!e){return}
+    if(e.type==='DIMENSION'){if(!e[67]&&isFinite(e[13])&&isFinite(e[14]))dims.push({x1:Math.min(e[13],e[14]),x2:Math.max(e[13],e[14]),y:(e[23]+e[24])/2,m:e[42],t:e[1]?dxfClean(e[1],true):''})}
+    else if(e.t!=null&&!e[67]&&!(e.type==='ATTRIB'&&(e[70]&1))&&!(e[40]<1e-4)){const al=(e[72]||e[73]||e[74])&&e[11]!=null;out.push({s:dxfClean(e.t,e.type==='MTEXT'),x:al?e[11]:e[10],y:al?e[21]:e[20],h:e[40]||1,layer:e[8]||''})}
+    e=null};
+  for(let i=0;i+1<L.length;i+=2){
+    const c=+L[i], v=L[i+1];
+    if(c===0){flush(); const t=v.trim();
+      if(t==='SECTION'){expectSec=true;continue} if(t==='ENDSEC'){sec='';continue}
+      if(sec==='ENTITIES'&&(t==='TEXT'||t==='MTEXT'||t==='ATTRIB'||t==='DIMENSION'))e={type:t};
+      continue}
+    if(expectSec&&c===2){sec=v.trim();expectSec=false;continue}
+    if(!e)continue;
+    if(c===1)e.t=(e.t||'')+v, e[1]=e.t; else if(c===3)e.t=(e.t||'')+v;
+    else if([10,20,11,21,13,23,14,24,40,42].includes(c))e[c]=parseFloat(v); else if([62,67,70,72,73,74].includes(c))e[c]=parseInt(v); else if(c===8)e[8]=v.trim();
+  }
+  flush(); return {texts:out.filter(t=>t.s&&isFinite(t.x)&&isFinite(t.y)),dims};
+}
+const DXF_COT=/^[NĐD][A-ZĐ]{0,3}\d{1,3}(?:[.,]\d+)?-\d{1,3}[A-Za-z]{0,4}$/;
+const DXF_MONG=/^(\d{1,2}\s*)?(M[A-ZĐ]{0,3}\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?[A-Za-z]{0,3}|T\d{2}-\d{2}[A-Za-z]{0,2})$/;
+const DXF_KC=/^(\d{2,4}(?:[.,]\d+)?)\s*m$/i;
+function dxfParseProfile({texts:ents,dims},opt={}){
+  const med=a=>{const s=a.slice().sort((x,y)=>x-y);return s.length?s[s.length>>1]:1};
+  const cods=ents.filter(t=>DXF_COT.test(t.s.replace(/\s+/g,'')));
+  if(!cods.length) return {rows:[],warn:['Không tìm thấy chữ ký hiệu cột nào (dạng N122-21C, Đ122-26C). Kiểm tra lại file, hoặc chữ trong bản vẽ đã bị phá (explode) thành nét.']};
+  const h=med(cods.map(t=>t.h)), used=new Set(), warn=[];
+  const near=(list,fn)=>{let best=null,bd=1e99;list.forEach(t=>{if(used.has(t))return;const d=fn(t);if(d!=null&&d<bd){bd=d;best=t}});if(best)used.add(best);return best};
+  let towers=cods.map(c=>({x:c.x,y:c.y,cot:c.s.replace(/\s+/g,'')}));
+  const yMed=med(towers.map(t=>t.y));
+  // cổng trạm / pooctic: chữ "PT" cùng hàng với ký hiệu cột
+  ents.filter(t=>/^(PT|P\.T|Cột cổng|CC)$/i.test(t.s)&&Math.abs(t.y-yMed)<15*h&&Math.abs(t.h-h)<h*.5).forEach(t=>{
+    const tba=ents.find(u=>/^TBA/i.test(u.s)&&Math.abs(u.x-t.x)<8*h&&Math.abs(u.y-t.y)<4*h);towers.push({x:t.x,y:t.y,pt:true,vt:tba?t.s+' '+tba.s:t.s})});
+  // số thứ tự: số nguyên cùng hàng, bên trái ký hiệu cột
+  const nums=ents.filter(t=>/^\d{1,3}[a-z'’"]{0,2}$/.test(t.s));
+  towers.forEach(T=>{if(T.pt)return;const n=near(nums,t=>{const dx=T.x-t.x,dy=Math.abs(T.y-t.y);return dx>0&&dx<14*h&&dy<1.5*Math.max(h,t.h)?dx+dy*3:null});if(n)T.vt=n.s});
+  // móng: ngay dưới ký hiệu cột
+  const mongs=ents.filter(t=>DXF_MONG.test(t.s.replace(/\s+/g,'')));
+  towers.forEach(T=>{if(T.pt)return;const m=near(mongs,t=>{const dx=Math.abs(T.x-t.x),dy=T.y-t.y;return dy>0&&dy<4*h&&dx<8*h?dx+dy:null});if(m){const mm=m.s.replace(/\s+/g,'').match(/^(\d{1,2})?(.+)$/);T.mong=mm[2];if(mm[1])T.qmong=mm[1]}});
+  // bỏ ký hiệu nằm ngoài mặt cắt (chú thích, bảng ký hiệu…): không có số thứ tự trong khi đa số có
+  const withVt=towers.filter(t=>t.vt);
+  if(withVt.length>=towers.length*0.6&&withVt.length<towers.length){const drop=towers.length-withVt.length;towers=withVt;warn.push(`Bỏ qua ${drop} ký hiệu cột không có số thứ tự bên cạnh (thường là chú thích, bảng ký hiệu).`)}
+  // thứ tự: theo số thứ tự nếu không trùng, không thì theo khung (hàng) rồi trái → phải
+  const nt=towers.filter(t=>!t.pt);
+  if(nt.every(t=>/^\d+/.test(t.vt||''))&&new Set(nt.map(t=>t.vt)).size===nt.length){
+    nt.sort((a,b)=>parseInt(a.vt)-parseInt(b.vt)||a.vt.localeCompare(b.vt));
+    const asc=nt.length<2||nt[nt.length-1].x>=nt[0].x;
+    towers.filter(t=>t.pt).forEach(p=>{(asc?p.x<nt[0].x:p.x>nt[0].x)?nt.unshift(p):nt.push(p)}); towers=nt}
+  else{const byY=towers.slice().sort((a,b)=>b.y-a.y);let fr=0;byY.forEach((t,i)=>{if(i&&byY[i-1].y-t.y>25*h)fr++;t.fr=fr});towers.sort((a,b)=>a.fr-b.fr||a.x-b.x)}
+  // khoảng cột: ưu tiên kích thước (DIMENSION) giữa 2 cột, sau đó chữ "257m", cuối cùng tính theo toạ độ
+  const hd=dims.filter(d=>d.x2-d.x1>5*h&&d.m>0);
+  const sc=hd.length?med(hd.map(d=>d.m/(d.x2-d.x1))):1;
+  const kcs=ents.filter(t=>DXF_KC.test(t.s)); let est=0;
+  const tol=4*h;
+  for(let i=1;i<towers.length;i++){const A=towers[i-1],B=towers[i];if(Math.abs(A.y-B.y)>25*h)continue;
+    const x0=Math.min(A.x,B.x),x1=Math.max(A.x,B.x);
+    const d=hd.filter(d=>Math.abs(d.x1-x0)<tol&&Math.abs(d.x2-x1)<tol).sort((a,b)=>Math.abs(a.x1-x0)+Math.abs(a.x2-x1)-Math.abs(b.x1-x0)-Math.abs(b.x2-x1))[0];
+    if(d){const tv=parseFloat((d.t||'').replace(/[^\d.,]/g,'').replace(',','.'));B.kc=isFinite(tv)&&tv>0&&!/<>/.test(d.t)?tv:d.m;A.ax=A.ax??(Math.abs(d.x1-A.x)<Math.abs(d.x2-A.x)?d.x1:d.x2);B.ax=Math.abs(d.x1-B.x)<Math.abs(d.x2-B.x)?d.x1:d.x2;continue}
+    const ym=(A.y+B.y)/2,xm=(A.x+B.x)/2;
+    const k=near(kcs,t=>t.x>x0&&t.x<x1&&Math.abs(t.y-ym)<20*h?Math.abs(t.x-xm)+Math.abs(t.y-ym):null);
+    if(k){B.kc=parseFloat(k.s.replace(',','.'));continue}
+    B.kcEst=true;B.kc=null}
+  for(let i=1;i<towers.length;i++){const A=towers[i-1],B=towers[i];if(B.kcEst){B.kc=Math.abs((B.ax??B.x)-(A.ax??A.x))*sc;est++}}
+  if(est)warn.push(`${est} khoảng cột không có kích thước ghi trên bản vẽ – đã tính theo toạ độ (đánh dấu *), cần kiểm tra lại.`);
+  // góc lái: chữ "G1", "G2"… (hoặc có số độ) thẳng hàng với cột
+  ents.filter(t=>/^G\s*\d+/.test(t.s)).forEach(t=>{let best=null,bd=1e99;towers.forEach(T=>{const d=Math.abs((T.ax??T.x)-t.x);if(d<bd){bd=d;best=T}});
+    if(best&&bd<3*h&&!best.pt){const g=/°/.test(t.s)?parseGoc(t.s):null;if(g&&num(g.D))best.goc=g;else if(!best.goc)best.goc={ten:t.s.match(/^G\s*\d+/)[0].replace(/\s/g,'')}}});
+  const round=opt.round!==false;
+  const real=towers.filter(t=>!t.pt);
+  const rows=towers.map((T,i)=>{const r={id:uid(),vt:T.pt?T.vt:(T.vt||String(i+1))};
+    if(!T.pt){r.cot=T.cot;const isN=/^N/.test(T.cot);r.cd=isN?(T===real[0]||T===real[real.length-1]?'Néo cuối':T.goc?'Néo góc':'Néo thẳng'):'Đỡ thẳng'}else r.cd='Xà PT';
+    if(T.kc!=null&&T.kc>0)r.kc=String(round?Math.round(T.kc):+T.kc.toFixed(2));
+    if(T.kcEst)r._est=true;
+    if(T.mong){r.mong=T.mong;if(T.qmong)r.qmong=T.qmong}
+    if(T.goc){if(T.goc.D!=null){r.gocD=T.goc.D;r.gocM=T.goc.M;r.gocS=T.goc.S;r.gocH=T.goc.H}if(T.goc.ten)r.gocTen=T.goc.ten}
+    return r});
+  const noKc=rows.slice(1).filter(r=>!r.kc).length; if(noKc)warn.push(`${noKc} vị trí chưa có khoảng cột – kiểm tra và nhập tay.`);
+  const noVt=real.filter(t=>!t.vt).length; if(noVt)warn.push(`${noVt} cột không thấy số thứ tự bên cạnh – đã đánh số tạm.`);
+  const noM=real.filter(t=>!t.mong).length; if(noM&&noM<real.length)warn.push(`${noM} cột chưa thấy ký hiệu móng.`);
+  if(rows.some(r=>r.gocTen&&r.gocD==null))warn.push('Bản vẽ chỉ có tên góc (G1, G2…) chưa có số độ – đã đánh dấu néo góc, bạn nhập độ/phút/giây ở bảng kê.');
+  return {rows,warn};
+}
+async function profileDialog(){
+  if(!dirH){toast('Chưa kết nối dữ liệu');return}
+  let res=null,ents=null,fileName='';
+  const bg=modal(`<h3>Nhập mặt cắt dọc từ AutoCAD (DXF)</h3>
+    <p class="hint">Trong AutoCAD mở bản vẽ mặt cắt dọc, chọn <b>Save As → AutoCAD DXF (*.dxf)</b>, rồi chọn file đó ở đây. Phần mềm đọc chữ và kích thước trong bản vẽ: số thứ tự, ký hiệu cột (N122-31C, Đ122-38C…), ký hiệu móng ngay dưới (MB9x9…), khoảng cột (kích thước 257m…), cổng trạm (PT) và tên góc lái (G1, G2…). Đọc xong sẽ tạo <b>dự án mới</b>; bạn kiểm tra và bổ sung dây, chuỗi, phụ kiện ở bảng kê.</p>
+    <label>File DXF</label><input type="file" id="d_f" accept=".dxf">
+    <div id="d_opts" style="display:none">
+      <label>Tên dự án mới</label><input id="d_pn">
+      <div style="display:flex;gap:10px"><div style="flex:1"><label>Số móng mỗi vị trí (khi bản vẽ không ghi)</label><input id="d_qm" value="1" inputmode="decimal"></div>
+        <div style="flex:2"><label>Bắt đầu từ dự án mẫu (chép Thiết bị dự án)</label><select id="d_mau"><option value="">(không)</option>${projects.filter(x=>x.isMau).map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('')}</select></div></div>
+      <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="d_rd" checked style="width:auto;flex:none"> <span>Làm tròn khoảng cột đến mét (như số ghi trên bản vẽ)</span></label>
+      <label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" id="d_tb" checked style="width:auto;flex:none"> <span>Thêm các mã cột, móng đọc được vào <b>Thiết bị dự án</b></span></label>
+      <div id="d_prev" style="margin-top:12px"></div>
+    </div>`,
+  async bg=>{
+    if(!res||!res.rows.length){showErr(bg,'Chưa đọc được vị trí cột nào.');return false}
+    const name=bg.querySelector('#d_pn').value.trim()||fileName, qm=bg.querySelector('#d_qm').value.trim();
+    const newRows=res.rows.map(r=>{const o={...r};delete o._est;if(o.mong&&!o.qmong&&num(qm))o.qmong=qm;return o});
+    let thietBi=[],extraCols=[]; const mauId=bg.querySelector('#d_mau').value;
+    if(mauId){try{const {data}=await readJson(await (await pdir()).getFileHandle(mauId+'.json'));thietBi=(data.thietBi||[]).map(x=>({...x}));extraCols=(data.extraCols||[]).map(x=>({...x}))}catch(e){}}
+    if(bg.querySelector('#d_tb').checked){const ci={};(catalog||[]).forEach(c=>ci[c.ma]=c);
+      codesIn(newRows).forEach((g,ma)=>{if(thietBi.some(x=>x.ma===ma))return;thietBi.push(ci[ma]?{...ci[ma]}:{nhom:g,ma,ten:(g==='Mong'?'Móng ':'Cột ')+ma,dvt:g==='Mong'?'Móng':'Cột',hh:''})})}
+    const id=uid(); const fh=await (await pdir()).getFileHandle(id+'.json',{create:true});
+    await writeJson(fh,{id,name,tinh:'',cdt:'',gd:'',gc:'Nhập từ mặt cắt dọc '+fileName,chuSoHuu:me?.id||'',phuTrach:me?.id||'',trangThai:'Đang làm',createdAt:Date.now(),createdBy:me?.id||myName,updatedAt:Date.now(),updatedBy:me?.id||myName,rows:newRows,thietBi,extraCols});
+    await loadList(); await openProject(id); tab='tk'; renderTab();
+    toast(`Đã tạo dự án với ${newRows.length} vị trí từ ${fileName}`);
+  },'Tạo dự án');
+  bg.querySelector('.modal').style.width='min(760px,94vw)';
+  const $b=s=>bg.querySelector(s);
+  $b('#d_f').onchange=async e=>{
+    const f=e.target.files[0]; if(!f) return; fileName=f.name.replace(/\.[^.]+$/,'');
+    const box=$b('#d_prev'); $b('#d_opts').style.display=''; box.innerHTML='<div class="hint">Đang đọc…</div>';
+    await new Promise(r=>setTimeout(r,20));
+    try{
+      if(/\.dwg$/i.test(f.name)) throw new Error('File .dwg không đọc trực tiếp được – trong AutoCAD chọn Save As → DXF rồi chọn lại.');
+      ents=dxfEntities(dxfText(new Uint8Array(await f.arrayBuffer())));
+    }catch(err){res=null;box.innerHTML=`<div class="warnbox">${esc(err.message)}</div>`;return}
+    show()};
+  $b('#d_rd').onchange=()=>{if(ents)show()};
+  function show(){const box=$b('#d_prev');
+    res=dxfParseProfile(ents,{round:$b('#d_rd').checked});
+    if(!$b('#d_pn').value)$b('#d_pn').value=fileName;
+    const len=res.rows.reduce((s,r)=>s+num(r.kc),0);
+    box.innerHTML=`<div style="background:var(--acc2);border-radius:6px;padding:10px 12px;line-height:1.7">Đọc được <b>${res.rows.length}</b> vị trí cột, tổng khoảng cột <b>${fmt(len,1)} m</b>, ${res.rows.filter(r=>r.cd.startsWith('Néo')).length} néo / ${res.rows.filter(r=>r.cd.startsWith('Đỡ')).length} đỡ.</div>
+      ${res.warn.map(w=>`<div class="warnbox" style="margin-top:6px">${esc(w)}</div>`).join('')}
+      ${res.rows.length?`<div style="max-height:300px;overflow:auto;margin-top:8px"><table class="lk" style="width:100%"><thead><tr><th>VT</th><th>Loại cột</th><th>Công dụng</th><th>Góc lái</th><th style="text-align:right">Khoảng cột (m)</th><th>Móng</th></tr></thead><tbody>
+      ${res.rows.map(r=>`<tr><td>${esc(r.vt)}</td><td class="mono">${esc(r.cot)}</td><td>${esc(r.cd)}</td><td>${r.gocD!=null?esc(gocStr(r,r.gocTen||'')):esc(r.gocTen||'')}</td><td class="num" style="${r._est?'color:var(--warn)':''}">${esc(r.kc||'')}${r._est?' *':''}</td><td class="mono">${r.mong?esc((r.qmong?r.qmong+' × ':'')+r.mong):''}</td></tr>`).join('')}</tbody></table></div>`:''}`;
+  }
+}
+$('#btnDxf').onclick=()=>profileDialog();
+
 $('#btnDash').onclick=async()=>{if(dirty)await flushSave();renderDash()};
 function projectForm(p){
   const bgf=modal(`<h3>${p?'Sửa thông tin dự án':'Tạo dự án mới'}</h3>
