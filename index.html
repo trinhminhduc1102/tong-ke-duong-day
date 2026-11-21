@@ -208,7 +208,7 @@ let COLS = [
   ['cd','Công dụng',96,'cd'],
   ['goc','Góc lái (độ ° phút \' giây " – trái/phải)',236,'goc'],
   ['kc','Khoảng cột (m)',70,'n'],
-  ['nday','Số sợi',46,'n',null,'Dây dẫn'],['day','Loại',104,'c','Day','Dây dẫn'],
+  ['nday','Số sợi',46,'n',null,'Dây dẫn'],['day','Loại',104,'c','Day','Dây dẫn'],['leo','Dây lèo (m/sợi)',70,'n',null,'Dây dẫn'],
   ['ncs','Số sợi',46,'n',null,'Dây chống sét'],['cs','Loại',100,'c','Day','Dây chống sét'],
   ['qn1','SL',44,'n',null,'Chuỗi néo 1'],['n1','Loại',92,'c','Chuoi','Chuỗi néo 1'],
   ['qn2','SL',44,'n',null,'Chuỗi néo 2'],['n2','Loại',92,'c','Chuoi','Chuỗi néo 2'],
@@ -246,15 +246,20 @@ function colGroups(cols){const info={};let gi=-1,last=null;cols.forEach((c,j)=>{
   if(g){const prevSame=j>0&&cols[j-1][5]===g, nextSame=j<cols.length-1&&cols[j+1][5]===g;info[c[0]]={g,hue:GRP_HUES[gi%GRP_HUES.length],start:!prevSame,end:!nextSame}}});return info}
 function grpStyle(gi,head){if(!gi)return'';const t=head?`hsla(${gi.hue},70%,55%,.22)`:`hsla(${gi.hue},70%,60%,.10)`;const bg=head?`linear-gradient(${t},${t}),var(--panel)`:t;const bd=`2px solid hsla(${gi.hue},60%,45%,.75)`;
   return `background:${bg};${gi.start?`border-left:${bd};`:''}${gi.end?`border-right:${bd};`:''}`}
-const NO_SUM=new Set(['nday','ncs','q_nd']);
+const NO_SUM=new Set(['nday','ncs','q_nd','leo']);
 const colSum=k=>rows.reduce((s,r)=>s+(r.type==='sec'?0:num(r[k])),0);
 const wireLen=(t,n)=>rows.reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)*num(r[n])),0);
-const FOOT_SPECIAL={day:()=>wireLen('day','nday'),cs:()=>wireLen('cs','ncs')};
+// Dây lèo: nhập m cho 1 sợi tại vị trí; tổng = m lèo × số sợi dây dẫn (lấy ở dòng đó, trống thì lấy dòng gần nhất phía trên)
+function leoList(){const out=[];let n=0,ma='';rows.forEach((r,i)=>{if(r.type==='sec')return;if(num(r.nday))n=num(r.nday);if(r.day)ma=r.day;
+  const v=num(r.leo);if(v)out.push({i,ma:r.day||ma,n:num(r.nday)||n,m:v*(num(r.nday)||n)})});return out}
+const leoLen=()=>leoList().reduce((s,x)=>s+x.m,0);
+const FOOT_SPECIAL={day:()=>wireLen('day','nday')+leoLen(),leo:()=>leoLen(),cs:()=>wireLen('cs','ncs')};
+const FOOT_TITLE={day:'Tổng dây dẫn = Σ khoảng cột × số sợi + dây lèo (chưa tính hao hụt)',leo:'Tổng dây lèo = Σ (m lèo/sợi × số sợi dây dẫn)',cs:'Tổng chiều dài dây = Σ khoảng cột × số sợi (chưa tính hao hụt)'};
 function footCells(cols,info){return cols.map(c=>{const gi=info[c[0]];const st=gi?grpStyle(gi,true):'';
-  if(FOOT_SPECIAL[c[0]]){const v=FOOT_SPECIAL[c[0]]();return `<td class="ft" data-f="_${c[0]}" style="${st}" title="Tổng chiều dài dây = Σ khoảng cột × số sợi (chưa tính hao hụt)">${v?fmt(v,1)+' m':''}</td>`}
+  if(FOOT_SPECIAL[c[0]]){const v=FOOT_SPECIAL[c[0]]();return `<td class="ft" data-f="_${c[0]}" style="${st}" title="${FOOT_TITLE[c[0]]||''}">${v?fmt(v,1)+' m':''}</td>`}
   if(c[3]==='n'&&!NO_SUM.has(c[0])){const v=colSum(c[0]);return `<td class="ft" data-f="${c[0]}" style="${st}">${v?fmt(v,2):''}</td>`}
   return `<td class="ft" style="${st}"></td>`}).join('')}
-function refreshFoot(){document.querySelectorAll('#pane [data-f]').forEach(td=>{const k=td.dataset.f;if(k==='_day'||k==='_cs'){const v=FOOT_SPECIAL[k.slice(1)]();td.textContent=v?fmt(v,1)+' m':'';return}const v=k==='_cq'?calcCq().len:colSum(k);td.textContent=v?fmt(v,2):''})}
+function refreshFoot(){document.querySelectorAll('#pane [data-f]').forEach(td=>{const k=td.dataset.f;if(k[0]==='_'&&FOOT_SPECIAL[k.slice(1)]){const v=FOOT_SPECIAL[k.slice(1)]();td.textContent=v?fmt(v,1)+' m':'';return}const v=k==='_cq'?calcCq().len:colSum(k);td.textContent=v?fmt(v,2):''})}
 function headHtml(cols,first,stickyFirst){const info=colGroups(cols);let r1='',r2='';
   for(let j=0;j<cols.length;j++){const c=cols[j],gi=info[c[0]];const sticky=stickyFirst&&j===0?'c1':'';
     if(!gi){r1+=`<th rowspan="2" class="${sticky}" style="min-width:${c[2]}px;width:${c[2]}px">${esc(c[1])}</th>`;continue}
@@ -790,6 +795,7 @@ function calcLietke(){
     add(r.day,num(r.kc)*num(r.nday));
     add(r.cs,num(r.kc)*num(r.ncs));
   });
+  leoList().forEach(x=>add(x.ma,x.m));
   const cq=calcCq(); Object.entries(cq.out).forEach(([ma,q])=>add(ma,q));
   const ci=catIndex();
   const base=effCat(); const extra=(catalog||[]).filter(g=>out[g.ma]&&!base.some(x=>x.ma===g.ma));
@@ -925,7 +931,7 @@ function onCellInput(e){
     window._gocL=syncGoc();rows.forEach((r,j)=>{const x=document.querySelector(`[data-gl="${j}"]`);if(x)x.textContent=window._gocL[j]?window._gocL[j]+'=':'';const b=x&&x.parentElement;if(b)b.title=gocStr(r,window._gocL[j])});
   }
   if(['kc','cd'].includes(k)) refreshAuto();
-  if(el.tagName==='INPUT'&&el.classList.contains('n')) refreshFoot();
+  if((el.tagName==='INPUT'&&el.classList.contains('n'))||k==='day') refreshFoot();
   if(['kc','cot','cd'].includes(k)) refreshKpi();
 }
 function refreshAuto(){const a=calcAuto();rows.forEach((r,i)=>{const x=document.querySelector(`[data-kn="${i}"]`),y=document.querySelector(`[data-kdb="${i}"]`);if(x)x.textContent=a.kn[i]??'';if(y)y.textContent=a.kdb[i]!=null?a.kdb[i].toFixed(1):''})}
@@ -1063,7 +1069,7 @@ function pasteDialog(){
 function renderLk(pane){
   const lk=calcLietke();
   let html=`<div class="kpis"><div class="kpi"><span>Chiều dài tuyến (m)</span><b>${fmt(lk.len,1)}</b></div><div class="kpi"><span>Số vị trí cột</span><b>${lk.nCot}</b></div><div class="kpi"><span>Cột néo / đỡ</span><b>${lk.nNeo} / ${lk.nDo}</b></div></div>
-   <p class="hint">Tự cộng từ bảng kê. Dây dẫn, dây CS = Σ (khoảng cột × số sợi) × (1 + hao hụt). Cáp quang = Σ (khoảng cột × số dây + dự phòng + cáp thêm); giá đỡ hộp nối = số hộp nối; ru lô = số đoạn giữa các hộp nối. Hao hụt sửa ở tab Danh mục.</p>`;
+   <p class="hint">Tự cộng từ bảng kê. Dây dẫn = [Σ (khoảng cột × số sợi) + Σ (dây lèo × số sợi)] × (1 + hao hụt); dây CS = Σ (khoảng cột × số sợi) × (1 + hao hụt). Cáp quang = Σ (khoảng cột × số dây + dự phòng + cáp thêm); giá đỡ hộp nối = số hộp nối; ru lô = số đoạn giữa các hộp nối. Hao hụt sửa ở tab Danh mục.</p>`;
   {const secs=sectionStats(); if(secs.length>1||(secs[0]&&secs[0].ten!=='Toàn tuyến')){html+=`<table class="lk" style="margin:0 0 14px;min-width:620px"><thead><tr><th>Đoạn tuyến</th><th style="text-align:right">Chiều dài (m)</th><th style="text-align:right">Số VT</th><th style="text-align:right">Néo</th><th style="text-align:right">Đỡ</th></tr></thead><tbody>${secs.map(x=>`<tr><td>${esc(x.ten)}</td><td class="num">${fmt(x.len,2)}</td><td class="num">${x.nCot}</td><td class="num">${x.nNeo}</td><td class="num">${x.nDo}</td></tr>`).join('')}<tr class="gh"><td>Tổng cộng</td><td class="num">${fmt(lk.len,2)}</td><td class="num">${lk.nCot}</td><td class="num">${lk.nNeo}</td><td class="num">${lk.nDo}</td></tr></tbody></table>`}}
   if(lk.unknown.length) html+=`<div class="warnbox">Mã có trong bảng kê nhưng chưa có trong danh mục (chưa được liệt kê): ${lk.unknown.map(u=>esc(u.ma)+' ('+fmt(u.sl)+')').join(', ')}</div>`;
   html+=`<label style="font-size:12px;color:var(--mute)"><input type="checkbox" id="hideZero" ${window._hz!==false?'checked':''}> Ẩn vật liệu số lượng 0</label>
