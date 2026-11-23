@@ -405,7 +405,7 @@ async function askName(force){
 function renderUserBar(){
   $('#status').insertAdjacentHTML?0:0;
   const bar=$('#userbar'); if(!bar) return;
-  bar.innerHTML=fbUser&&me?`👤 <b title="${esc(fbUser.email||'')}">${esc(me.ten)}</b>${isAdmin()?' (quản lý)':''} · <a href="#" id="chgPin" title="Gửi email đổi mật khẩu">đổi mật khẩu</a> · <a href="#" id="lgOut">đăng xuất</a>`:'';
+  bar.innerHTML=fbUser&&me?`👤 <b title="${esc(fbUser.email||'')}">${esc(me.ten)}</b>${me.boPhan?` <span style="color:var(--mute)">– ${esc(me.boPhan)}</span>`:''}${isAdmin()?' (quản lý)':''} · <a href="#" id="chgPin" title="Gửi email đổi mật khẩu">đổi mật khẩu</a> · <a href="#" id="lgOut">đăng xuất</a>`:'';
   const a=$('#chgDir'); if(a) a.onclick=e=>{e.preventDefault();pickFolder()};
   const b=$('#chgPin'); if(b) b.onclick=e=>{e.preventDefault();changePin()};
   const c=$('#lgOut'); if(c) c.onclick=e=>{e.preventDefault();logout()};
@@ -414,12 +414,14 @@ function renderUserBar(){
 /* ---------------- Thành viên (Firebase Auth + collection users) ---------------- */
 let members=[], me=null, legacyNames={}, usersUnsub=null;
 const isAdmin=()=>me&&me.vaiTro==='quanly'&&me.trangThai==='duyet';
+const BO_PHAN=['Lãnh đạo Xí nghiệp','Lãnh đạo phòng','Thiết kế đường dây','Thiết kế trạm','Thiết kế xây dựng','Thiết kế nhị thứ','Dự toán','Khác'];
+const boPhanOpts=(v,ph)=>`<option value="">${ph||'— Chọn bộ phận công tác —'}</option>`+BO_PHAN.map(b=>`<option ${b===v?'selected':''}>${esc(b)}</option>`).join('');
 const TRANG_THAI=['Đang làm','Chờ số liệu','Đang kiểm tra','Đã xong','Tạm dừng'];
 const TT_COLOR={'Đang làm':'#2563eb','Chờ số liệu':'#c2410c','Đang kiểm tra':'#7c3aed','Đã xong':'#15803d','Tạm dừng':'#6b7280'};
 function memberName(idOrName){const m=members.find(x=>x.id===idOrName);return m?m.ten:(legacyNames[idOrName]||idOrName||'')}
 function memberIdOf(x){if(!x)return '';const m=members.find(m=>m.id===x)||members.find(m=>m.ten===x)||(legacyNames[x]?members.find(m=>m.ten===legacyNames[x]):null);return m?m.id:''}
 function ownerOf(p){return p?(p.chuSoHuu||memberIdOf(p.createdBy)):''}
-function editorsOf(p){if(!p||p.isMau)return [];return [...new Set([ownerOf(p),memberIdOf(p.phuTrach)||p.phuTrach].filter(Boolean))]}
+function editorsOf(p){if(!p||p.isMau)return [];return [...new Set([ownerOf(p),memberIdOf(p.phuTrach)||p.phuTrach,...(Array.isArray(p.nhanSu)?p.nhanSu:[])].filter(Boolean))]}
 function isMine(p){return !!(p&&me&&editorsOf(p).includes(me.id))}
 function canEditProj(p){return !!(p&&me&&(isAdmin()||isMine(p)))}
 function lockUi(locked){$('#btnNew').disabled=locked;$('#btnImp').disabled=locked;$('#btnDxf').disabled=locked;const d=$('#btnDash');if(d)d.disabled=locked;$('#q').disabled=locked;if(locked)$('#plist').innerHTML=''}
@@ -441,15 +443,16 @@ function showSignIn(msg){
 }
 function showRegister(){
   centerCard(`<h2 style="font-size:18px;margin:0 0 4px">Đăng ký tài khoản</h2><p class="hint">Sau khi đăng ký, quản lý tổ duyệt thì bạn mới vào làm việc được.</p>
-    <input id="rg_ten" placeholder="Họ và tên" style="${inpCss}"><input id="rg_em" type="email" placeholder="Email" style="${inpCss}" autocomplete="username">
+    <input id="rg_ten" placeholder="Họ và tên" style="${inpCss}"><select id="rg_bp" style="${inpCss}">${boPhanOpts('','— Bộ phận công tác (bắt buộc) —')}</select><input id="rg_em" type="email" placeholder="Email" style="${inpCss}" autocomplete="username">
     <input id="rg_pw" type="password" placeholder="Mật khẩu (ít nhất 6 ký tự)" style="${inpCss}" autocomplete="new-password"><input id="rg_pw2" type="password" placeholder="Nhập lại mật khẩu" style="${inpCss}" autocomplete="new-password">
     <div id="rg_err"></div><p style="margin:10px 0"><button class="pri" id="rg_ok" style="width:100%">Đăng ký</button></p>
     <p class="hint"><a href="#" id="rg_back">← Đã có tài khoản? Đăng nhập</a></p>`);
   $('#rg_back').onclick=e=>{e.preventDefault();showSignIn()};
   $('#rg_ok').onclick=async()=>{const ten=$('#rg_ten').value.trim(),em=$('#rg_em').value.trim(),pw=$('#rg_pw').value;
     const er=m=>$('#rg_err').innerHTML=`<div class="warnbox">${esc(m)}</div>`;
-    if(!ten)return er('Nhập họ và tên.'); if(pw!==$('#rg_pw2').value)return er('Hai mật khẩu không khớp.');
-    window._pendingName=ten;
+    const bp=$('#rg_bp').value;
+    if(!ten)return er('Nhập họ và tên.'); if(!bp)return er('Chọn bộ phận công tác.'); if(pw!==$('#rg_pw2').value)return er('Hai mật khẩu không khớp.');
+    window._pendingName=ten; window._pendingBoPhan=bp;
     try{await fbAuth.createUserWithEmailAndPassword(em,pw)}catch(e){er(fbErr(e))}};
 }
 async function ensureUserDoc(u){
@@ -458,7 +461,7 @@ async function ensureUserDoc(u){
   if(snap.exists) return snap.data();
   const ten=window._pendingName||u.displayName||u.email;
   const setup=await fdb.collection('meta').doc('setup').get();
-  const base={ten,email:(u.email||'').toLowerCase(),ngayTao:Date.now()};
+  const base={ten,email:(u.email||'').toLowerCase(),ngayTao:Date.now(),...(window._pendingBoPhan?{boPhan:window._pendingBoPhan}:{})};
   if(!setup.exists){ // người đầu tiên = quản lý
     const b=fdb.batch();b.set(fdb.collection('meta').doc('setup'),{uid:u.uid,at:Date.now()});b.set(ref,{...base,vaiTro:'quanly',trangThai:'duyet'});
     try{await b.commit();return {...base,vaiTro:'quanly',trangThai:'duyet'}}catch(e){/* người khác vừa thiết lập */}
@@ -480,6 +483,7 @@ async function onAuth(u){
   setStatus('Đang tải…');
   let d; try{d=await ensureUserDoc(u)}catch(e){centerCard(`<p class="warnbox">Không đọc được tài khoản: ${esc(fbErr(e))}</p><p class="hint">Nếu bạn là quản lý: kiểm tra đã dán “Luật bảo mật” (Firestore → Rules) theo hướng dẫn.</p><p><button id="lo2">Đăng xuất</button></p>`);$('#lo2').onclick=()=>fbAuth.signOut();return}
   me={id:u.uid,...d}; myName=d.ten; renderUserBar();
+  if(!me.boPhan){const bp=await askBoPhan();if(bp){try{await fdb.collection('users').doc(u.uid).update({boPhan:bp});me.boPhan=bp}catch(e){toast(fbErr(e))}}}
   if(d.trangThai!=='duyet'){lockUi(true);
     centerCard(d.trangThai==='cho'?`<h2 style="font-size:17px;margin:0 0 6px">Đang chờ duyệt</h2><p class="hint">Tài khoản <b>${esc(u.email)}</b> đã đăng ký. Hãy báo quản lý tổ duyệt, sau đó bấm “Kiểm tra lại”.</p><p><button class="pri" id="rc">Kiểm tra lại</button> <button id="lo2">Đăng xuất</button></p>`
       :`<h2 style="font-size:17px">Tài khoản đã bị khoá</h2><p class="hint">Liên hệ quản lý tổ.</p><p><button id="lo2">Đăng xuất</button></p>`);
@@ -489,25 +493,52 @@ async function onAuth(u){
   try{const f=fsCache.get(DATA_ROOT+'/thanh-vien.json');if(f){(JSON.parse(f.content).users||[]).forEach(x=>legacyNames[x.id]=x.ten)}}catch(e){}
   dirH=new FsDir(DATA_ROOT,'Firebase'); afterLogin();
 }
+function askBoPhan(){return new Promise(res=>{
+  centerCard(`<h2 style="font-size:17px;margin:0 0 6px">Bổ sung bộ phận công tác</h2><p class="hint">Tài khoản <b>${esc(me.ten)}</b> chưa khai báo bộ phận công tác. Chọn để tiếp tục (dùng để phân chia việc cho các bộ môn).</p>
+    <select id="ab_bp" style="${inpCss}">${boPhanOpts('')}</select><div id="ab_err"></div><p><button class="pri" id="ab_ok" style="width:100%">Lưu và tiếp tục</button></p>`);
+  $('#ab_ok').onclick=()=>{const v=$('#ab_bp').value;if(!v){$('#ab_err').innerHTML='<div class="warnbox">Chọn bộ phận công tác.</div>';return}res(v)}})}
 async function logout(){if(dirty)await flushSave();curId=null;cur=null;rows=[];await fbAuth.signOut()}
 function changePin(){if(!fbUser)return;fbAuth.sendPasswordResetEmail(fbUser.email).then(()=>toast('Đã gửi email đổi mật khẩu tới '+fbUser.email)).catch(e=>toast(fbErr(e)))}
 async function setUser(id,patch){try{await fdb.collection('users').doc(id).update(patch)}catch(e){toast(fbErr(e))}}
 function manageMembers(){
   if(!isAdmin()) return;
-  const bg=modal(`<h3>Thành viên tổ</h3><p class="hint">Thành viên tự đăng ký bằng email + mật khẩu trên trang. Bạn duyệt ở đây; người bị khoá không vào được.</p><div id="mlist"></div>`,()=>{window._renderMembers=null},'Xong',null);
-  bg.querySelector('.modal').style.width='min(760px,94vw)';
+  const bg=modal(`<h3>Thành viên tổ</h3><p class="hint">Thành viên tự đăng ký bằng email + mật khẩu trên trang và khai bộ phận công tác. Bạn duyệt, sửa bộ phận ở đây; người bị khoá không vào được.</p><div id="mlist"></div>`,()=>{window._renderMembers=null},'Xong',null);
+  bg.querySelector('.modal').style.width='min(900px,96vw)';
   const ord={cho:0,duyet:1,khoa:2};
   window._renderMembers=()=>{const box=bg.querySelector('#mlist');if(!box)return;
-    box.innerHTML=`<table class="lk" style="width:100%"><thead><tr><th>Họ tên</th><th>Email</th><th>Trạng thái</th><th>Vai trò</th><th>Dự án</th><th></th></tr></thead><tbody>${members.slice().sort((a,b)=>(ord[a.trangThai]??3)-(ord[b.trangThai]??3)||a.ten.localeCompare(b.ten,'vi')).map(m=>`<tr>
-      <td>${esc(m.ten)}${m.id===me.id?' (bạn)':''}</td><td>${esc(m.email||'')}</td>
+    box.innerHTML=`<table class="lk" style="width:100%"><thead><tr><th>Họ tên</th><th>Bộ phận</th><th>Email</th><th>Trạng thái</th><th>Vai trò</th><th>Dự án</th><th></th></tr></thead><tbody>${members.slice().sort((a,b)=>(ord[a.trangThai]??3)-(ord[b.trangThai]??3)||a.ten.localeCompare(b.ten,'vi')).map(m=>`<tr>
+      <td>${esc(m.ten)}${m.id===me.id?' (bạn)':''}</td><td><select data-bp="${esc(m.id)}" style="width:auto">${boPhanOpts(m.boPhan||'','(chưa khai)')}</select></td><td>${esc(m.email||'')}</td>
       <td>${m.trangThai==='cho'?'<b style="color:#c2410c">Chờ duyệt</b>':m.trangThai==='khoa'?'<span style="color:var(--mute)">Đã khoá</span>':'<span style="color:#15803d">Đang dùng</span>'}</td>
       <td><select data-role="${esc(m.id)}" ${m.id===me.id?'disabled':''}><option value="thanhvien" ${m.vaiTro!=='quanly'?'selected':''}>Thành viên</option><option value="quanly" ${m.vaiTro==='quanly'?'selected':''}>Quản lý</option></select></td>
-      <td>${projects.filter(p=>p.phuTrach===m.id).length||''}</td>
+      <td>${projects.filter(p=>!p.isMau&&editorsOf(p).includes(m.id)).length||''}</td>
       <td style="white-space:nowrap">${m.id===me.id?'':m.trangThai==='cho'?`<button class="pri" data-ok="${esc(m.id)}">Duyệt</button> <button class="ghost" data-lock="${esc(m.id)}">Từ chối</button>`:m.trangThai==='khoa'?`<button class="ghost" data-ok="${esc(m.id)}">Mở khoá</button>`:`<button class="ghost" data-lock="${esc(m.id)}">Khoá</button>`}</td></tr>`).join('')}</tbody></table>`};
   window._renderMembers();
   const box=bg.querySelector('#mlist');
-  box.addEventListener('change',e=>{if(e.target.dataset.role)setUser(e.target.dataset.role,{vaiTro:e.target.value})});
+  box.addEventListener('change',e=>{if(e.target.dataset.role)setUser(e.target.dataset.role,{vaiTro:e.target.value});if(e.target.dataset.bp&&e.target.value)setUser(e.target.dataset.bp,{boPhan:e.target.value})});
   box.addEventListener('click',e=>{const a=e.target.closest('[data-ok]'),l=e.target.closest('[data-lock]');if(a)setUser(a.dataset.ok,{trangThai:'duyet'});if(l)setUser(l.dataset.lock,{trangThai:'khoa'})});
+}
+/* ---- Nhân sự dự án: người tạo thêm thành viên cùng chỉnh sửa ---- */
+function staffDialog(){
+  if(!cur) return;
+  const own=ownerOf(cur), can=!!me&&(isAdmin()||own===me.id);
+  let sel=new Set(Array.isArray(cur.nhanSu)?cur.nhanSu:[]);
+  const act=members.filter(m=>m.trangThai==='duyet'&&m.id!==own);
+  const groups=[...BO_PHAN,''].map(b=>[b,act.filter(m=>(m.boPhan||'')===b).sort((x,y)=>x.ten.localeCompare(y.ten,'vi'))]).filter(([,l])=>l.length);
+  const bg=modal(`<h3>Nhân sự dự án</h3>
+    <p class="hint">Người tạo: <b>${esc(memberName(own)||memberName(cur.createdBy)||'?')}</b>${cur.phuTrach&&memberIdOf(cur.phuTrach)!==own?` · phụ trách: <b>${esc(memberName(cur.phuTrach))}</b>`:''}. ${can?'Tích chọn các thành viên cùng tham gia – họ được <b>chỉnh sửa</b> dự án này (không được xoá dự án, không được đổi nhân sự).':'Chỉ người tạo dự án hoặc quản lý tổ được thay đổi nhân sự.'}</p>
+    <input id="ns_q" placeholder="Tìm tên…" style="margin-bottom:8px">
+    <div id="ns_list" style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:4px 10px">${groups.map(([b,l])=>`<div class="nsg"><div class="lhd" style="margin:8px 0 4px">${esc(b||'Chưa khai bộ phận')}<span>${l.length}</span></div>
+      ${l.map(m=>`<label class="nsi" data-n="${esc((m.ten||'').toLowerCase())}" style="display:flex;gap:8px;align-items:center;padding:3px 0;color:var(--ink);margin:0"><input type="checkbox" value="${esc(m.id)}" ${sel.has(m.id)?'checked':''} ${can?'':'disabled'} style="width:auto;flex:none"> <span>${esc(m.ten)}</span> <small style="color:var(--mute)">${esc(m.email||'')}</small></label>`).join('')}</div>`).join('')||'<div class="empty">Chưa có thành viên nào khác được duyệt.</div>'}</div>
+    <div id="ns_cnt" class="hint" style="margin-top:6px"></div>`,
+  async()=>{ if(!can) return;
+    const list=[...sel].filter(id=>members.some(m=>m.id===id));
+    cur.nhanSu=list; dirty=true; await flushSave(true); canWrite=canEditProj(cur);
+    await loadList(); renderHead(); renderTab(); toast(list.length?`Đã cập nhật nhân sự: ${list.length} người cùng chỉnh sửa`:'Đã bỏ hết nhân sự tham gia');
+  }, can?'Lưu':'Đóng', can?undefined:null);
+  bg.querySelector('.modal').style.width='min(620px,94vw)';
+  const cnt=()=>bg.querySelector('#ns_cnt').textContent=`Đã chọn ${sel.size} người.`; cnt();
+  bg.querySelector('#ns_list').addEventListener('change',e=>{const c=e.target;if(c.type!=='checkbox')return;c.checked?sel.add(c.value):sel.delete(c.value);cnt()});
+  bg.querySelector('#ns_q').oninput=e=>{const q=e.target.value.trim().toLowerCase();bg.querySelectorAll('.nsi').forEach(l=>l.style.display=!q||l.dataset.n.includes(q)?'flex':'none')};
 }
 /* ---- Sao lưu / nhập dữ liệu (quản lý) ---- */
 function backupAll(){
@@ -607,7 +638,7 @@ async function loadList(){
       const f=await h.getFile(); const c=metaCache[name];
       if(c&&c.mtime===f.lastModified){out.push(c.meta);continue}
       const d=JSON.parse(await f.text());
-      const meta={id:name.slice(0,-5),name:d.name,tinh:d.tinh,cdt:d.cdt,gd:d.gd,gc:d.gc,updatedAt:d.updatedAt,updatedBy:d.updatedBy,createdBy:d.createdBy,chuSoHuu:d.chuSoHuu,phuTrach:d.phuTrach,trangThai:d.trangThai,han:d.han,isMau:!!d.isMau,len:(d.rows||[]).reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),nRows:(d.rows||[]).filter(r=>r.type!=='sec'&&(r.cot||r.vt)).length,mtime:f.lastModified};
+      const meta={id:name.slice(0,-5),name:d.name,tinh:d.tinh,cdt:d.cdt,gd:d.gd,gc:d.gc,updatedAt:d.updatedAt,updatedBy:d.updatedBy,createdBy:d.createdBy,chuSoHuu:d.chuSoHuu,nhanSu:d.nhanSu,phuTrach:d.phuTrach,trangThai:d.trangThai,han:d.han,isMau:!!d.isMau,len:(d.rows||[]).reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),nRows:(d.rows||[]).filter(r=>r.type!=='sec'&&(r.cot||r.vt)).length,mtime:f.lastModified};
       metaCache[name]={mtime:f.lastModified,meta}; out.push(meta);
     }catch(e){out.push({id:name.slice(0,-5),name:name+' (file lỗi)',broken:true})}
   }
@@ -679,8 +710,10 @@ function dxfClean(s,mtext){
   return s.replace(/^M§/,'MĐ').replace(/^§/,'Đ');
 }
 function dxfEntities(txt){
-  const L=txt.split(/\r?\n/), out=[], dims=[]; let sec='', e=null, expectSec=false;
+  const L=txt.split(/\r?\n/), out=[], dims=[], ins=[]; let sec='', e=null, expectSec=false, lastIns=null;
   const flush=()=>{if(!e){return}
+    if(e.type==='INSERT'){if(!e[67]&&isFinite(e[10])){lastIns={name:e.bn||'',x:e[10],y:e[20],layer:e[8]||'',attrs:{}};ins.push(lastIns)}else lastIns=null;e=null;return}
+    if(e.type==='ATTRIB'&&lastIns&&e.tag&&e.t!=null)lastIns.attrs[e.tag.toUpperCase()]=dxfClean(e.t,false);
     if(e.type==='DIMENSION'){if(!e[67]&&isFinite(e[13])&&isFinite(e[14]))dims.push({x1:Math.min(e[13],e[14]),x2:Math.max(e[13],e[14]),y:(e[23]+e[24])/2,m:e[42],t:e[1]?dxfClean(e[1],true):''})}
     else if(e.t!=null&&!e[67]&&!(e.type==='ATTRIB'&&(e[70]&1))&&!(e[40]<1e-4)){const al=(e[72]||e[73]||e[74])&&e[11]!=null;out.push({s:dxfClean(e.t,e.type==='MTEXT'),x:al?e[11]:e[10],y:al?e[21]:e[20],h:e[40]||1,layer:e[8]||''})}
     e=null};
@@ -688,19 +721,23 @@ function dxfEntities(txt){
     const c=+L[i], v=L[i+1];
     if(c===0){flush(); const t=v.trim();
       if(t==='SECTION'){expectSec=true;continue} if(t==='ENDSEC'){sec='';continue}
-      if(sec==='ENTITIES'&&(t==='TEXT'||t==='MTEXT'||t==='ATTRIB'||t==='DIMENSION'))e={type:t};
+      if(sec==='ENTITIES'&&(t==='TEXT'||t==='MTEXT'||t==='ATTRIB'||t==='DIMENSION'||t==='INSERT'))e={type:t};
+      else if(t!=='ATTRIB'&&t!=='SEQEND')lastIns=null;
+      if(t==='SEQEND')lastIns=null;
       continue}
     if(expectSec&&c===2){sec=v.trim();expectSec=false;continue}
     if(!e)continue;
+    if(c===2){if(e.type==='INSERT')e.bn=v.trim();else if(e.type==='ATTRIB')e.tag=v.trim();continue}
+    if(e.type==='INSERT'){if(c===10||c===20)e[c]=parseFloat(v);else if(c===8)e[8]=v.trim();else if(c===67)e[67]=parseInt(v);continue}
     if(c===1)e.t=(e.t||'')+v, e[1]=e.t; else if(c===3)e.t=(e.t||'')+v;
     else if([10,20,11,21,13,23,14,24,40,42].includes(c))e[c]=parseFloat(v); else if([62,67,70,72,73,74].includes(c))e[c]=parseInt(v); else if(c===8)e[8]=v.trim();
   }
-  flush(); return {texts:out.filter(t=>t.s&&isFinite(t.x)&&isFinite(t.y)),dims};
+  flush(); return {texts:out.filter(t=>t.s&&isFinite(t.x)&&isFinite(t.y)),dims,ins};
 }
 const DXF_COT=/^[NĐD][A-ZĐ]{0,3}\d{1,3}(?:[.,]\d+)?-\d{1,3}[A-Za-z]{0,4}$/;
 const DXF_MONG=/^(\d{1,2}\s*)?(M[A-ZĐ]{0,3}\d+(?:[.,]\d+)?\s*[xX×]\s*\d+(?:[.,]\d+)?[A-Za-z]{0,3}|T\d{2}-\d{2}[A-Za-z]{0,2})$/;
 const DXF_KC=/^(\d{2,4}(?:[.,]\d+)?)\s*m$/i;
-function dxfParseProfile({texts:ents,dims},opt={}){
+function dxfParseProfile({texts:ents,dims,ins=[]},opt={}){
   const med=a=>{const s=a.slice().sort((x,y)=>x-y);return s.length?s[s.length>>1]:1};
   const cods=ents.filter(t=>DXF_COT.test(t.s.replace(/\s+/g,'')));
   if(!cods.length) return {rows:[],warn:['Không tìm thấy chữ ký hiệu cột nào (dạng N122-21C, Đ122-26C). Kiểm tra lại file, hoặc chữ trong bản vẽ đã bị phá (explode) thành nét.']};
@@ -717,47 +754,75 @@ function dxfParseProfile({texts:ents,dims},opt={}){
   // móng: ngay dưới ký hiệu cột
   const mongs=ents.filter(t=>DXF_MONG.test(t.s.replace(/\s+/g,'')));
   towers.forEach(T=>{if(T.pt)return;const m=near(mongs,t=>{const dx=Math.abs(T.x-t.x),dy=T.y-t.y;return dy>0&&dy<4*h&&dx<8*h?dx+dy:null});if(m){const mm=m.s.replace(/\s+/g,'').match(/^(\d{1,2})?(.+)$/);T.mong=mm[2];if(mm[1])T.qmong=mm[1]}});
+  // ký hiệu cột trên mặt cắt (block Cot_neo_goc, Cot_do_thang… ) – cho tim cột chính xác và công dụng
+  const SYM_CD=[[/neo[_ ]?cuoi|néo[_ ]?cuối/i,'Néo cuối'],[/neo[_ ]?goc|néo[_ ]?góc/i,'Néo góc'],[/neo[_ ]?thang|néo[_ ]?thẳng/i,'Néo thẳng'],[/do[_ ]?vuot|đỡ[_ ]?vượt/i,'Đỡ vượt'],[/do[_ ]?(thang|goc)|đỡ/i,'Đỡ thẳng']];
+  const okv=v=>v&&!/^\?+$|^-$/.test(v);
+  const syms=ins.map(b=>{const f=SYM_CD.find(([re])=>re.test(b.name));if(!f&&!(okv(b.attrs.TEN_COT)&&/c[oộ]t/i.test(b.name)))return null;
+    const hm=b.name.match(/(\d+(?:[.,]\d+)?)\s*$/);return {x:b.x,y:b.y,cd:f?f[1]:'',cao:hm?hm[1]:'',a:b.attrs}}).filter(Boolean);
+  if(syms.length){
+    const usedT=new Set();
+    syms.sort((a,b)=>a.x-b.x).forEach(S=>{let best=null,bd=1e99;towers.forEach(T=>{if(usedT.has(T))return;const d=Math.abs(T.x-S.x);if(d<bd&&Math.abs(T.y-S.y)<40*h){bd=d;best=T}});
+      if(best&&bd<4*h){usedT.add(best);best.ax=S.x;best.cdSym=S.cd;best.sym=S}
+      else{const T={x:S.x,ax:S.x,y:yMed,fromSym:true,cdSym:S.cd,sym:S,cot:okv(S.a.TEN_COT)?S.a.TEN_COT:'',vt:okv(S.a.VI_TRI)?S.a.VI_TRI:''};towers.push(T);usedT.add(T)}});
+    const nNew=towers.filter(t=>t.fromSym).length;
+    if(nNew)warn.push(`${nNew} cột chỉ có ký hiệu trên mặt cắt, chưa có nhãn (số thứ tự / loại cột / móng) – đã lấy theo thuộc tính của ký hiệu, cần kiểm tra lại.`);
+  }
   // bỏ ký hiệu nằm ngoài mặt cắt (chú thích, bảng ký hiệu…): không có số thứ tự trong khi đa số có
-  const withVt=towers.filter(t=>t.vt);
-  if(withVt.length>=towers.length*0.6&&withVt.length<towers.length){const drop=towers.length-withVt.length;towers=withVt;warn.push(`Bỏ qua ${drop} ký hiệu cột không có số thứ tự bên cạnh (thường là chú thích, bảng ký hiệu).`)}
+  const withVt=towers.filter(t=>t.vt||t.fromSym);
+  if(withVt.length>=towers.length*0.6&&withVt.length<towers.length){const drop=towers.length-withVt.length;towers=withVt;warn.push(`Bỏ qua ${drop} nhãn cột không có số thứ tự bên cạnh (thường là chú thích, bảng ký hiệu).`)}
   // thứ tự: theo số thứ tự nếu không trùng, không thì theo khung (hàng) rồi trái → phải
   const nt=towers.filter(t=>!t.pt);
-  if(nt.every(t=>/^\d+/.test(t.vt||''))&&new Set(nt.map(t=>t.vt)).size===nt.length){
+  if(!nt.some(t=>t.fromSym)&&nt.every(t=>/^\d+/.test(t.vt||''))&&new Set(nt.map(t=>t.vt)).size===nt.length){
     nt.sort((a,b)=>parseInt(a.vt)-parseInt(b.vt)||a.vt.localeCompare(b.vt));
     const asc=nt.length<2||nt[nt.length-1].x>=nt[0].x;
     towers.filter(t=>t.pt).forEach(p=>{(asc?p.x<nt[0].x:p.x>nt[0].x)?nt.unshift(p):nt.push(p)}); towers=nt}
-  else{const byY=towers.slice().sort((a,b)=>b.y-a.y);let fr=0;byY.forEach((t,i)=>{if(i&&byY[i-1].y-t.y>25*h)fr++;t.fr=fr});towers.sort((a,b)=>a.fr-b.fr||a.x-b.x)}
+  else{const byY=towers.slice().sort((a,b)=>b.y-a.y);let fr=0;byY.forEach((t,i)=>{if(i&&byY[i-1].y-t.y>25*h)fr++;t.fr=fr});towers.sort((a,b)=>a.fr-b.fr||(a.ax??a.x)-(b.ax??b.x))}
   // khoảng cột: ưu tiên kích thước (DIMENSION) giữa 2 cột, sau đó chữ "257m", cuối cùng tính theo toạ độ
   const hd=dims.filter(d=>d.x2-d.x1>5*h&&d.m>0);
   const sc=hd.length?med(hd.map(d=>d.m/(d.x2-d.x1))):1;
   const kcs=ents.filter(t=>DXF_KC.test(t.s)); let est=0;
   const tol=4*h;
   for(let i=1;i<towers.length;i++){const A=towers[i-1],B=towers[i];if(Math.abs(A.y-B.y)>25*h)continue;
-    const x0=Math.min(A.x,B.x),x1=Math.max(A.x,B.x);
+    const xa=A.ax??A.x, xb=B.ax??B.x, x0=Math.min(xa,xb),x1=Math.max(xa,xb);
     const d=hd.filter(d=>Math.abs(d.x1-x0)<tol&&Math.abs(d.x2-x1)<tol).sort((a,b)=>Math.abs(a.x1-x0)+Math.abs(a.x2-x1)-Math.abs(b.x1-x0)-Math.abs(b.x2-x1))[0];
-    if(d){const tv=parseFloat((d.t||'').replace(/[^\d.,]/g,'').replace(',','.'));B.kc=isFinite(tv)&&tv>0&&!/<>/.test(d.t)?tv:d.m;A.ax=A.ax??(Math.abs(d.x1-A.x)<Math.abs(d.x2-A.x)?d.x1:d.x2);B.ax=Math.abs(d.x1-B.x)<Math.abs(d.x2-B.x)?d.x1:d.x2;continue}
-    const ym=(A.y+B.y)/2,xm=(A.x+B.x)/2;
+    if(d){const tv=parseFloat((d.t||'').replace(/[^\d.,]/g,'').replace(',','.'));B.kc=isFinite(tv)&&tv>0&&!/<>/.test(d.t)?tv:d.m;A.ax=A.ax??(Math.abs(d.x1-xa)<Math.abs(d.x2-xa)?d.x1:d.x2);B.ax=B.ax??(Math.abs(d.x1-xb)<Math.abs(d.x2-xb)?d.x1:d.x2);continue}
+    const ym=(A.y+B.y)/2,xm=(xa+xb)/2;
     const k=near(kcs,t=>t.x>x0&&t.x<x1&&Math.abs(t.y-ym)<20*h?Math.abs(t.x-xm)+Math.abs(t.y-ym):null);
     if(k){B.kc=parseFloat(k.s.replace(',','.'));continue}
     B.kcEst=true;B.kc=null}
   for(let i=1;i<towers.length;i++){const A=towers[i-1],B=towers[i];if(B.kcEst){B.kc=Math.abs((B.ax??B.x)-(A.ax??A.x))*sc;est++}}
   if(est)warn.push(`${est} khoảng cột không có kích thước ghi trên bản vẽ – đã tính theo toạ độ (đánh dấu *), cần kiểm tra lại.`);
-  // góc lái: chữ "G1", "G2"… (hoặc có số độ) thẳng hàng với cột
-  ents.filter(t=>/^G\s*\d+/.test(t.s)).forEach(t=>{let best=null,bd=1e99;towers.forEach(T=>{const d=Math.abs((T.ax??T.x)-t.x);if(d<bd){bd=d;best=T}});
-    if(best&&bd<3*h&&!best.pt){const g=/°/.test(t.s)?parseGoc(t.s):null;if(g&&num(g.D))best.goc=g;else if(!best.goc)best.goc={ten:t.s.match(/^G\s*\d+/)[0].replace(/\s/g,'')}}});
+  // góc lái: nhãn "G1", "G2"… ở hàng Hướng tuyến, kèm số đo góc (07đ43'20'' hoặc 07°43'20") và chữ Trái/Phải bên cạnh
+  const ANG=/^(\d{1,3}(?:[.,]\d+)?)\s*(?:°|º|đ|độ|d|o)\s*(?:(\d{1,2})\s*(?:['’′]|ph)?)?\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:''|"|”|″|’’|s)?)?\s*(Trái|Phải|T|P)?$/i;
+  const angs=ents.filter(t=>ANG.test(t.s)), dirs=ents.filter(t=>/^(Trái|Phải|Tr¸i|Ph¶i|lái trái|lái phải)$/i.test(t.s));
+  ents.filter(t=>/^G\s*\d+\b/.test(t.s)).forEach(t=>{const ten=t.s.match(/^G\s*\d+/)[0].replace(/\s/g,'');
+    let best=null,bd=1e99;towers.forEach(T=>{const d=Math.abs((T.ax??T.x)-t.x);if(d<bd){bd=d;best=T}});
+    if(!best||bd>3*h||best.pt||best.goc&&best.goc.D!=null)return;
+    let g=null; const inl=t.s.replace(/^G\s*\d+\s*=?\s*/,'');
+    if(inl){const m=inl.match(ANG);if(m)g={D:m[1].replace(',','.'),M:m[2]||'',S:(m[3]||'').replace(',','.'),H:m[4]?(/^t/i.test(m[4])?'T':'P'):''}}
+    if(!g){const a=angs.filter(u=>Math.abs(u.x-t.x)<6*h&&Math.abs(u.y-t.y)<8*h).sort((u,v)=>Math.hypot(u.x-t.x,u.y-t.y)-Math.hypot(v.x-t.x,v.y-t.y))[0];
+      if(a){const m=a.s.match(ANG);g={D:m[1].replace(',','.'),M:m[2]||'',S:(m[3]||'').replace(',','.'),H:m[4]?(/^t/i.test(m[4])?'T':'P'):''};
+        if(!g.H){const d=dirs.filter(u=>Math.abs(u.y-a.y)<1.5*Math.max(h,a.h)&&a.x-u.x>0&&a.x-u.x<8*h).sort((u,v)=>(a.x-u.x)-(a.x-v.x))[0];if(d)g.H=/^(lái )?tr/i.test(vn(d.s))?'T':'P'}}}
+    best.goc=g?{...g,ten}:{ten};
+  });
+  towers.forEach(T=>{if(T.pt||!T.sym||(T.goc&&T.goc.D!=null))return;const gv=T.sym.a.GOC;if(!okv(gv)||/^0+$/.test(gv))return;const m=gv.replace(/^G\s*\d+\s*=\s*/,'').match(ANG);
+    if(m&&num(m[1])){T.goc={...(T.goc||{}),D:m[1].replace(',','.'),M:m[2]||'',S:(m[3]||'').replace(',','.'),H:m[4]?(/^t/i.test(m[4])?'T':'P'):''};T.gocAttr=true}});
   const round=opt.round!==false;
   const real=towers.filter(t=>!t.pt);
+  // cột chỉ có ký hiệu, chưa có số thứ tự: đánh theo cột trước (VD 12 → 12a)
+  towers.forEach((T,i)=>{if(!T.pt&&!T.vt&&T.fromSym){let p='';for(let j=i-1;j>=0;j--){if(!towers[j].pt&&towers[j].vt){p=towers[j].vt;break}}T.vt=p?p+'a':'?'}});
   const rows=towers.map((T,i)=>{const r={id:uid(),vt:T.pt?T.vt:(T.vt||String(i+1))};
-    if(!T.pt){r.cot=T.cot;const isN=/^N/.test(T.cot);r.cd=isN?(T===real[0]||T===real[real.length-1]?'Néo cuối':T.goc?'Néo góc':'Néo thẳng'):'Đỡ thẳng'}else r.cd='Xà PT';
+    if(!T.pt){r.cot=T.cot||'';const isN=/^N/.test(T.cot||'');r.cd=T.cdSym||(isN?(T===real[0]||T===real[real.length-1]?'Néo cuối':T.goc?'Néo góc':'Néo thẳng'):'Đỡ thẳng');if(T.fromSym)r._sym=true;if(T.sym&&T.sym.cao)r._cao=T.sym.cao}else r.cd='Xà PT';
     if(T.kc!=null&&T.kc>0)r.kc=String(round?Math.round(T.kc):+T.kc.toFixed(2));
     if(T.kcEst)r._est=true;
     if(T.mong){r.mong=T.mong;if(T.qmong)r.qmong=T.qmong}
     if(T.goc){if(T.goc.D!=null){r.gocD=T.goc.D;r.gocM=T.goc.M;r.gocS=T.goc.S;r.gocH=T.goc.H}if(T.goc.ten)r.gocTen=T.goc.ten}
     return r});
   const noKc=rows.slice(1).filter(r=>!r.kc).length; if(noKc)warn.push(`${noKc} vị trí chưa có khoảng cột – kiểm tra và nhập tay.`);
-  const noVt=real.filter(t=>!t.vt).length; if(noVt)warn.push(`${noVt} cột không thấy số thứ tự bên cạnh – đã đánh số tạm.`);
+  if(towers.some(t=>t.gocAttr))warn.push('Một số góc lái lấy từ thuộc tính ký hiệu cột (không có chữ ghi ở hàng Hướng tuyến) – kiểm tra lại.');
+  const noVt=real.filter(t=>!t.vt&&!t.fromSym).length; if(noVt)warn.push(`${noVt} cột không thấy số thứ tự bên cạnh – đã đánh số tạm.`);
   const noM=real.filter(t=>!t.mong).length; if(noM&&noM<real.length)warn.push(`${noM} cột chưa thấy ký hiệu móng.`);
-  if(rows.some(r=>r.gocTen&&r.gocD==null))warn.push('Bản vẽ chỉ có tên góc (G1, G2…) chưa có số độ – đã đánh dấu néo góc, bạn nhập độ/phút/giây ở bảng kê.');
+  if(rows.some(r=>r.gocTen&&r.gocD==null))warn.push('Một số góc chỉ có tên (G1, G2…) chưa đọc được số độ – đã đánh dấu néo góc, bạn nhập độ/phút/giây ở bảng kê.');
   return {rows,warn};
 }
 async function profileDialog(){
@@ -777,7 +842,7 @@ async function profileDialog(){
   async bg=>{
     if(!res||!res.rows.length){showErr(bg,'Chưa đọc được vị trí cột nào.');return false}
     const name=bg.querySelector('#d_pn').value.trim()||fileName, qm=bg.querySelector('#d_qm').value.trim();
-    const newRows=res.rows.map(r=>{const o={...r};delete o._est;if(o.mong&&!o.qmong&&num(qm))o.qmong=qm;return o});
+    const newRows=res.rows.map(r=>{const o={...r};delete o._est;delete o._sym;delete o._cao;if(o.mong&&!o.qmong&&num(qm))o.qmong=qm;return o});
     let thietBi=[],extraCols=[]; const mauId=bg.querySelector('#d_mau').value;
     if(mauId){try{const {data}=await readJson(await (await pdir()).getFileHandle(mauId+'.json'));thietBi=(data.thietBi||[]).map(x=>({...x}));extraCols=(data.extraCols||[]).map(x=>({...x}))}catch(e){}}
     if(bg.querySelector('#d_tb').checked){const ci={};(catalog||[]).forEach(c=>ci[c.ma]=c);
@@ -806,7 +871,7 @@ async function profileDialog(){
     box.innerHTML=`<div style="background:var(--acc2);border-radius:6px;padding:10px 12px;line-height:1.7">Đọc được <b>${res.rows.length}</b> vị trí cột, tổng khoảng cột <b>${fmt(len,1)} m</b>, ${res.rows.filter(r=>r.cd.startsWith('Néo')).length} néo / ${res.rows.filter(r=>r.cd.startsWith('Đỡ')).length} đỡ.</div>
       ${res.warn.map(w=>`<div class="warnbox" style="margin-top:6px">${esc(w)}</div>`).join('')}
       ${res.rows.length?`<div style="max-height:300px;overflow:auto;margin-top:8px"><table class="lk" style="width:100%"><thead><tr><th>VT</th><th>Loại cột</th><th>Công dụng</th><th>Góc lái</th><th style="text-align:right">Khoảng cột (m)</th><th>Móng</th></tr></thead><tbody>
-      ${res.rows.map(r=>`<tr><td>${esc(r.vt)}</td><td class="mono">${esc(r.cot)}</td><td>${esc(r.cd)}</td><td>${r.gocD!=null?esc(gocStr(r,r.gocTen||'')):esc(r.gocTen||'')}</td><td class="num" style="${r._est?'color:var(--warn)':''}">${esc(r.kc||'')}${r._est?' *':''}</td><td class="mono">${r.mong?esc((r.qmong?r.qmong+' × ':'')+r.mong):''}</td></tr>`).join('')}</tbody></table></div>`:''}`;
+      ${res.rows.map(r=>`<tr><td style="${r._sym?'color:var(--warn)':''}">${esc(r.vt)}${r._sym?' *':''}</td><td class="mono">${esc(r.cot||'')}${r._cao?` <small style="color:var(--mute)">${esc(r._cao)}m</small>`:''}</td><td>${esc(r.cd)}</td><td>${r.gocD!=null?esc(gocStr(r,r.gocTen||'')):esc(r.gocTen||'')}</td><td class="num" style="${r._est?'color:var(--warn)':''}">${esc(r.kc||'')}${r._est?' *':''}</td><td class="mono">${r.mong?esc((r.qmong?r.qmong+' × ':'')+r.mong):''}</td></tr>`).join('')}</tbody></table></div>`:''}`;
   }
 }
 $('#btnDxf').onclick=()=>profileDialog();
@@ -866,9 +931,10 @@ async function openProject(id){
 }
 function renderHead(){
   const ph=$('#work .ph'); if(!ph||!cur) return;
-  ph.innerHTML=`<div><h2>${esc(cur.name)}</h2><div class="meta">${[cur.tinh,cur.cdt,cur.gd].filter(Boolean).map(esc).join(' · ')}${cur.gc?' · '+esc(cur.gc):''}${cur.phuTrach?` · phụ trách: ${esc(memberName(cur.phuTrach))}`:''} · <b style="color:${TT_COLOR[cur.trangThai||'Đang làm']}">${esc(cur.trangThai||'Đang làm')}</b>${cur.updatedBy?` · sửa lần cuối: ${esc(memberName(cur.updatedBy))} ${fmtTime(cur.updatedAt)}`:''}</div></div>
-   <div class="act">${cur.isMau?'<button class="pri" id="bFromMau">+ Tạo dự án từ mẫu này</button>':''}<button id="bImp">Nhập Excel</button><button id="bEdit">Sửa thông tin</button><button id="bDup">Nhân bản</button><button id="bXlsx">Xuất Excel</button><button id="bDel" class="danger">Xoá</button></div>`;
+  ph.innerHTML=`<div><h2>${esc(cur.name)}</h2><div class="meta">${[cur.tinh,cur.cdt,cur.gd].filter(Boolean).map(esc).join(' · ')}${cur.gc?' · '+esc(cur.gc):''}${cur.phuTrach?` · phụ trách: ${esc(memberName(cur.phuTrach))}`:''}${(cur.nhanSu||[]).length?` · nhân sự: ${cur.nhanSu.map(id=>esc(memberName(id))).join(', ')}`:''} · <b style="color:${TT_COLOR[cur.trangThai||'Đang làm']}">${esc(cur.trangThai||'Đang làm')}</b>${cur.updatedBy?` · sửa lần cuối: ${esc(memberName(cur.updatedBy))} ${fmtTime(cur.updatedAt)}`:''}</div></div>
+   <div class="act">${cur.isMau?'<button class="pri" id="bFromMau">+ Tạo dự án từ mẫu này</button>':''}${cur.isMau?'':`<button id="bNs" title="Thêm thành viên cùng chỉnh sửa dự án">👥 Nhân sự${(cur.nhanSu||[]).length?' ('+cur.nhanSu.length+')':''}</button>`}<button id="bImp">Nhập Excel</button><button id="bEdit">Sửa thông tin</button><button id="bDup">Nhân bản</button><button id="bXlsx">Xuất Excel</button><button id="bDel" class="danger">Xoá</button></div>`;
   $('#bEdit').onclick=()=>projectForm(cur);
+  const bns=$('#bNs'); if(bns) bns.onclick=()=>staffDialog();
   const fmb=$('#bFromMau'); if(fmb) fmb.onclick=()=>{projectForm(null);setTimeout(()=>{const sel=document.querySelector('#f_mau');if(sel){sel.value=curId;sel.onchange()}},50)};
   canWrite=canEditProj(cur);
   const own=ownerOf(cur);
