@@ -49,6 +49,12 @@ aside input{width:100%;padding:6px 8px;border:1px solid var(--line);border-radiu
 .pi.on{background:var(--acc2)}
 .pi b{display:block;font-weight:600;line-height:1.3}
 .pi small{color:var(--mute);font-size:11px}
+.lxrow input{width:100%;border:1px solid transparent;background:#fffbe8;padding:3px 5px;font:inherit;border-radius:3px}.lxrow input:focus{border-color:var(--acc);outline:none;background:#fff}.lxrow input.n{text-align:right}
+.xrow input{background:#fffbe8}
+.mtag{font-size:11px;color:var(--mute);white-space:nowrap;font-style:italic}
+.lnk{border:0;background:none;color:var(--acc);cursor:pointer;padding:2px 0;font-size:12px}.lnk:hover{text-decoration:underline}
+tr.lxadd td{padding:2px 8px!important;border-bottom:1px solid var(--line)}
+.xdel{border:0;background:none;color:var(--mute);cursor:pointer;padding:0 4px;font-size:14px;line-height:1}.xdel:hover{color:#c0392b}.xdel:disabled{display:none}
 .lhd{display:flex;justify-content:space-between;align-items:center;margin:12px 6px 4px;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--mute);border-bottom:1px solid var(--line);padding-bottom:3px}
 .lhd:first-child{margin-top:2px}
 .lhd span{font-weight:600;background:var(--line2);border-radius:8px;padding:0 6px}
@@ -248,7 +254,11 @@ function colGroups(cols){const info={};let gi=-1,last=null;cols.forEach((c,j)=>{
 function grpStyle(gi,head){if(!gi)return'';const t=head?`hsla(${gi.hue},70%,55%,.22)`:`hsla(${gi.hue},70%,60%,.10)`;const bg=head?`linear-gradient(${t},${t}),var(--panel)`:t;const bd=`2px solid hsla(${gi.hue},60%,45%,.75)`;
   return `background:${bg};${gi.start?`border-left:${bd};`:''}${gi.end?`border-right:${bd};`:''}`}
 const NO_SUM=new Set(['nday','ncs','q_nd','leo']);
-const colSum=k=>rows.reduce((s,r)=>s+(r.type==='sec'?0:num(r[k])),0);
+const cqX=()=>(cur&&Array.isArray(cur.cqx))?cur.cqx:[];
+const LX_KHAC='_khac';
+const lkX=()=>(cur&&Array.isArray(cur.lkx))?cur.lkx:[];
+const cqAll=()=>[...rows,...cqX()];
+const colSum=k=>(['vt','cot','cd','kc'].includes(k)?rows:cqAll()).reduce((s,r)=>s+(r.type==='sec'?0:num(r[k])),0);
 const wireLen=(t,n)=>rows.reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)*num(r[n])),0);
 // Dây lèo: nhập m cho 1 sợi tại vị trí; tổng = m lèo × số sợi dây dẫn (lấy ở dòng đó, trống thì lấy dòng gần nhất phía trên)
 function leoList(){const out=[];let n=0,ma='';rows.forEach((r,i)=>{if(r.type==='sec')return;if(num(r.nday))n=num(r.nday);if(r.day)ma=r.day;
@@ -958,43 +968,66 @@ function calcLietke(){
 }
 
 function calcCq(){
-  // chiều dài cáp từng dòng = khoảng cột + dự phòng + cáp thêm (chỉ dòng có chọn loại cáp)
-  const per=rows.map(r=>r.type==='sec'||!r.cq?0:num(r.kc)*(num(r.q_nd)||1)+num(r.q_dp)+num(r.q_them));
+  // chiều dài cáp từng dòng = khoảng cột × số dây + dự phòng + cáp thêm (chỉ dòng có chọn loại cáp)
+  // gồm cả các đoạn tuyến cáp quang bổ sung (cur.cqx) kê bên dưới
+  const nMain=rows.length, all=cqAll();
+  const per=all.map(r=>r.type==='sec'||!r.cq?0:num(r.kc)*(num(r.q_nd)||1)+num(r.q_dp)+num(r.q_them));
   const out={}; const add=(ma,q)=>{if(!ma||!q)return;out[ma]=(out[ma]||0)+q};
-  rows.forEach((r,i)=>{if(r.type==='sec')return; add(r.cq,per[i]); add(r.q_hn,num(r.q_qhn)); CQ_FIXED.forEach(([k,ma])=>add(ma,num(r[k])))});
-  const nHop=rows.reduce((s,r)=>s+(r.type!=='sec'&&r.q_hn?num(r.q_qhn)||1:0),0);
-  // ru lô: cắt đoạn tại vị trí có hộp nối
-  const rulo=rows.map(()=>null); let acc=0,nRulo=0,started=false;
-  const lastCq=rows.map((r,i)=>r.type!=='sec'&&r.cq?i:-1).filter(i=>i>=0).pop();
-  rows.forEach((r,i)=>{if(r.type==='sec')return; if(per[i]){acc+=per[i];started=true}
+  all.forEach((r,i)=>{if(r.type==='sec')return; add(r.cq,per[i]); add(r.q_hn,num(r.q_qhn)); CQ_FIXED.forEach(([k,ma])=>add(ma,num(r[k])))});
+  const nHop=all.reduce((s,r)=>s+(r.type!=='sec'&&r.q_hn?num(r.q_qhn)||1:0),0);
+  // ru lô: cắt đoạn tại vị trí có hộp nối, và tại chỗ bắt đầu mỗi đoạn tuyến bổ sung
+  const rulo=all.map(()=>null); let acc=0,nRulo=0,started=false,lastPer=-1;
+  const lastCq=all.map((r,i)=>r.type!=='sec'&&r.cq?i:-1).filter(i=>i>=0).pop();
+  all.forEach((r,i)=>{
+    if(i>=nMain&&(i===nMain||r.type==='sec')&&acc>0&&lastPer>=0){rulo[lastPer]={n:++nRulo,len:acc};acc=0;started=false}
+    if(r.type==='sec')return; if(per[i]){acc+=per[i];started=true;lastPer=i}
     if(started&&(r.q_hn||i===lastCq)&&acc>0){rulo[i]={n:++nRulo,len:acc};acc=0}});
   if(nHop) add('GDHN',nHop);
   if(nRulo) add('RLCQ',nRulo);
-  const th=CQ_TH.map(([k,ten,dvt])=>({ten,dvt,sl:rows.reduce((s,r)=>s+(r.type==='sec'?0:num(r[k])),0)})).filter(x=>x.sl);
+  const th=CQ_TH.map(([k,ten,dvt])=>({ten,dvt,sl:all.reduce((s,r)=>s+(r.type==='sec'?0:num(r[k])),0)})).filter(x=>x.sl);
   return {out,th,rulo,nRulo,per,len:per.reduce((a,b)=>a+b,0)};
 }
 function renderCq(pane){
-  const cq=calcCq();
+  const cq=calcCq(); const X=cqX();
   const HQ=headHtml(CQ_COLS,false,false); window._ginfo=HQ.info;
   const towerCells=(r,i)=>`<td class="auto c1" style="text-align:left;color:var(--ink)">${esc(r.vt||'')}</td><td class="auto" style="text-align:left">${esc(r.cot||'')}</td><td class="auto" style="text-align:left">${esc(r.cd||'')}</td><td class="auto">${r.kc?esc(r.kc):''}</td>`;
   pane.innerHTML=`<div class="kpis">
     <div class="kpi"><span>Chiều dài cáp quang (m)</span><b id="cqLen">${fmt(cq.len,1)}</b></div>
     <div class="kpi"><span>Số ru lô (đoạn giữa các hộp nối)</span><b id="cqRl">${cq.nRulo}</b></div></div>
-  <p class="hint">Dùng chung danh sách vị trí với tab Bảng kê (thêm, chèn, xoá vị trí ở tab đó). Chiều dài cáp mỗi dòng = khoảng cột × số dây (để trống = 1) + dự phòng lên xuống cột + cáp thêm, chỉ tính ở dòng có chọn <b>loại cáp</b>. Ru lô được cắt tại vị trí có hộp nối. Các cột <b>TH</b> là phần thu hồi về kho. Mẹo: chọn loại cáp ở dòng đầu rồi bấm <b>Điền loại cáp xuống</b>.</p>
+  <p class="hint">Dùng chung danh sách vị trí với tab Bảng kê (thêm, chèn, xoá vị trí ở tab đó). Cáp quang đi trên đoạn tuyến khác (không có trong bảng kê đường dây) thì bấm <b>+ Đoạn tuyến khác</b> ở cuối bảng để kê thêm bên dưới. Chiều dài cáp mỗi dòng = khoảng cột × số dây (để trống = 1) + dự phòng lên xuống cột + cáp thêm, chỉ tính ở dòng có chọn <b>loại cáp</b>. Ru lô được cắt tại vị trí có hộp nối. Các cột <b>TH</b> là phần thu hồi về kho. Mẹo: chọn loại cáp ở dòng đầu rồi bấm <b>Điền loại cáp xuống</b>.</p>
   <div style="overflow:auto;max-height:calc(100vh - 290px);border:1px solid var(--line);border-radius:6px">
   <table class="grid"><thead><tr><th rowspan="2" class="c0" style="width:56px;min-width:56px">TT</th><th rowspan="2" class="c1" style="min-width:74px">Tên vị trí</th><th rowspan="2" style="min-width:100px">Loại cột</th><th rowspan="2" style="min-width:80px">Công dụng</th><th rowspan="2" style="min-width:60px">Khoảng cột (m)</th>
    ${HQ.r1}<th rowspan="2" class="g" style="min-width:76px">Chiều dài cáp (m)</th><th rowspan="2" class="g" style="min-width:70px">Ru lô (m)</th></tr><tr>${HQ.r2}</tr></thead>
   <tbody>${rows.map((r,i)=>r.type==='sec'?`<tr class="sec"><td class="auto c0" style="text-align:center">§</td><td class="c1" style="background:var(--sec);font-weight:600;padding:0 6px">${esc(r.vt||'')}</td><td colspan="${CQ_COLS.length+5}" style="background:var(--sec);padding:0 6px;font-weight:600">${esc(r.gc||'')}</td></tr>`
      :`<tr><td class="auto c0" style="text-align:center">${rows.slice(0,i+1).filter(x=>x.type!=='sec').length}</td>${towerCells(r,i)}${CQ_COLS.map(c=>cellHtml(r,i,c)).join('')}<td class="auto" data-cl="${i}">${cq.per[i]?fmt(cq.per[i],2):''}</td><td class="auto" data-rl="${i}">${cq.rulo[i]?`#${cq.rulo[i].n}: ${fmt(cq.rulo[i].len,1)}`:''}</td></tr>`).join('')}
-  ${!rows.length?`<tr><td colspan="${CQ_COLS.length+7}" class="empty">Chưa có vị trí nào – thêm vị trí ở tab Bảng kê.</td></tr>`:''}</tbody>
-  <tfoot><tr><td class="ft c0">Tổng</td><td class="ft c1">${rows.filter(r=>r.type!=='sec'&&(r.cot||r.vt)).length} VT</td><td class="ft"></td><td class="ft"></td><td class="ft" data-f="kc">${fmt(colSum('kc'),2)}</td>${footCells(CQ_COLS,HQ.info)}<td class="ft" data-f="_cq">${fmt(cq.len,2)}</td><td class="ft"></td></tr></tfoot></table></div>
-  <div class="tbar"><button id="cqFill">Điền loại cáp xuống các dòng trống</button>${!(catalog||[]).some(c=>c.nhom==='CQ'||c.nhom==='HN')?'<button id="cqDef" class="pri">Thêm mã cáp quang mặc định vào danh mục chung</button>':''}</div>`;
+  ${!rows.length?`<tr><td colspan="${CQ_COLS.length+7}" class="empty">Chưa có vị trí nào – thêm vị trí ở tab Bảng kê.</td></tr>`:''}
+  ${X.length?`<tr class="sec"><td colspan="${CQ_COLS.length+7}" style="background:#dfe9f5;font-weight:700;padding:4px 8px;text-align:left">Các đoạn tuyến cáp quang bổ sung (chỉ kê cáp quang, không thuộc bảng kê đường dây)</td></tr>`:''}
+  ${X.map((r,j)=>{const i=rows.length+j;const del=`<button class="xdel" data-xd="${j}" title="Xoá dòng này" ${canWrite?'':'disabled'}>×</button>`;
+     if(r.type==='sec') return `<tr class="sec"><td class="auto c0" style="text-align:center">${del}</td><td class="c1" style="background:var(--sec)"><input ${canWrite?'':'disabled'} data-i="${i}" data-k="vt" value="${esc(r.vt||'')}" placeholder="C" style="font-weight:600"></td><td colspan="${CQ_COLS.length+5}" style="background:var(--sec)"><input ${canWrite?'':'disabled'} data-i="${i}" data-k="gc" value="${esc(r.gc||'')}" placeholder="Tên đoạn tuyến (VD: Cáp quang đi trên tuyến 35kV hiện có)" style="font-weight:600"></td></tr>`;
+     const inp=(k,cls,ph)=>`<td class="${cls||''}"><input ${canWrite?'':'disabled'} class="${k==='kc'?'n':''}" data-i="${i}" data-k="${k}" value="${esc(r[k]??'')}" ${k==='kc'?'inputmode="decimal"':''} placeholder="${ph||''}"></td>`;
+     return `<tr class="xrow"><td class="auto c0" style="text-align:center;white-space:nowrap">${del}${X.slice(0,j+1).filter(x=>x.type!=='sec').length}</td>${inp('vt','c1')}${inp('cot','','loại cột')}${inp('cd','','công dụng')}${inp('kc')}${CQ_COLS.map(c=>cellHtml(r,i,c)).join('')}<td class="auto" data-cl="${i}">${cq.per[i]?fmt(cq.per[i],2):''}</td><td class="auto" data-rl="${i}">${cq.rulo[i]?`#${cq.rulo[i].n}: ${fmt(cq.rulo[i].len,1)}`:''}</td></tr>`}).join('')}</tbody>
+  <tfoot><tr><td class="ft c0">Tổng</td><td class="ft c1">${cqAll().filter(r=>r.type!=='sec'&&(r.cot||r.vt)).length} VT</td><td class="ft"></td><td class="ft"></td><td class="ft" data-f="_kcall">${fmt(cqAll().reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),2)}</td>${footCells(CQ_COLS,HQ.info)}<td class="ft" data-f="_cq">${fmt(cq.len,2)}</td><td class="ft"></td></tr></tfoot></table></div>
+  <div class="tbar"><button id="cqSec">+ Đoạn tuyến khác</button><button id="cqRow">+ Vị trí</button><button id="cqRow5">+ 5 vị trí</button><button id="cqFill">Điền loại cáp xuống các dòng trống</button>${!(catalog||[]).some(c=>c.nhom==='CQ'||c.nhom==='HN')?'<button id="cqDef" class="pri">Thêm mã cáp quang mặc định vào danh mục chung</button>':''}</div>`;
   const tb=pane.querySelector('tbody');
-  const upd=()=>{const c=calcCq();refreshFoot();rows.forEach((r,i)=>{const y=pane.querySelector(`[data-cl="${i}"]`);if(y)y.textContent=c.per[i]?fmt(c.per[i],2):'';const x=pane.querySelector(`[data-rl="${i}"]`);if(x)x.textContent=c.rulo[i]?`#${c.rulo[i].n}: ${fmt(c.rulo[i].len,1)}`:''});$('#cqLen').textContent=fmt(c.len,1);$('#cqRl').textContent=c.nRulo};
-  const h=e=>{const el=e.target;if(el.dataset.i==null)return;rows[+el.dataset.i][el.dataset.k]=el.value;if(el.tagName==='SELECT')el.parentElement.classList.remove('bad');scheduleSave();upd()};
-  tb.addEventListener('input',h); tb.addEventListener('change',h); tb.addEventListener('keydown',onKey);
+  const upd=()=>{const c=calcCq();refreshFoot();const kf=pane.querySelector('[data-f="_kcall"]');if(kf)kf.textContent=fmt(cqAll().reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),2);cqAll().forEach((r,i)=>{const y=pane.querySelector(`[data-cl="${i}"]`);if(y)y.textContent=c.per[i]?fmt(c.per[i],2):'';const x=pane.querySelector(`[data-rl="${i}"]`);if(x)x.textContent=c.rulo[i]?`#${c.rulo[i].n}: ${fmt(c.rulo[i].len,1)}`:''});$('#cqLen').textContent=fmt(c.len,1);$('#cqRl').textContent=c.nRulo};
+  const rowAt=i=>i<rows.length?rows[i]:X[i-rows.length];
+  const h=e=>{const el=e.target;if(el.dataset.i==null)return;const r=rowAt(+el.dataset.i);if(!r)return;r[el.dataset.k]=el.value;if(el.tagName==='SELECT')el.parentElement.classList.remove('bad');scheduleSave();upd()};
+  tb.addEventListener('input',h); tb.addEventListener('change',h);
+  const addX=(arr,focus)=>{if(!canWrite)return;cur.cqx=cqX().concat(arr);if(!Array.isArray(cur.cqx))cur.cqx=[];scheduleSave();renderCq(pane);if(focus!=null)focusCell(focus.i,focus.k)};
+  tb.addEventListener('keydown',e=>{const el=e.target;if(el.dataset.i==null)return;const i=+el.dataset.i;
+    if(i<rows.length){onKey(e);return}
+    const k=el.dataset.k, j=i-rows.length;
+    if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&canWrite){e.preventDefault();cur.cqx=cqX().slice();cur.cqx.splice(j+1,0,{id:uid()});scheduleSave();renderCq(pane);focusCell(i+1,k);return}
+    if(e.key==='Enter'||(e.key==='ArrowDown'&&el.tagName==='INPUT')){e.preventDefault();if(j+1>=X.length&&e.key==='Enter'&&canWrite){addX([{id:uid()}],{i:i+1,k});return}focusCell(Math.min(i+1,rows.length+X.length-1),k)}
+    if(e.key==='ArrowUp'&&el.tagName==='INPUT'){e.preventDefault();focusCell(Math.max(i-1,0),k)}});
+  tb.addEventListener('click',e=>{const b=e.target.closest('[data-xd]');if(!b||!canWrite)return;const j=+b.dataset.xd;const r=X[j];
+    const has=r.type==='sec'?r.gc||r.vt:Object.keys(r).some(k=>k!=='id'&&r[k]!==''&&r[k]!=null);
+    if(has&&!confirm('Xoá dòng này?'))return; cur.cqx=X.filter((_,x)=>x!==j);scheduleSave();renderCq(pane)});
+  $('#cqSec').onclick=()=>{const n=X.filter(r=>r.type==='sec').length;addX([{id:uid(),type:'sec',vt:String.fromCharCode(67+n>90?90:67+n),gc:''},{id:uid()}],{i:rows.length+X.length,k:'gc'})};
+  $('#cqRow').onclick=()=>addX([{id:uid()}],{i:rows.length+X.length,k:'vt'});
+  $('#cqRow5').onclick=()=>addX(Array.from({length:5},()=>({id:uid()})),{i:rows.length+X.length,k:'vt'});
   const cd=$('#cqDef'); if(cd) cd.onclick=()=>{catalog=catalog||[];DEFAULT_CAT.filter(c=>['CQ','HN','PKCQ'].includes(c.nhom)&&!catalog.some(x=>x.ma===c.ma)).forEach(c=>catalog.push({...c}));saveCat(true);renderCq(pane);toast('Đã thêm mã cáp quang vào danh mục chung')};
-  $('#cqFill').onclick=()=>{let last='';let n=0;rows.forEach(r=>{if(r.type==='sec')return;if(r.cq)last=r.cq;else if(last&&num(r.kc)){r.cq=last;n++}});if(n){scheduleSave();renderCq(pane)}toast(n?`Đã điền ${n} dòng`:'Không có dòng trống nào để điền')};
+  $('#cqFill').onclick=()=>{let last='';let n=0;cqAll().forEach(r=>{if(r.type==='sec')return;if(r.cq)last=r.cq;else if(last&&num(r.kc)){r.cq=last;n++}});if(n){scheduleSave();renderCq(pane)}toast(n?`Đã điền ${n} dòng`:'Không có dòng trống nào để điền')};
 }
 
 /* ---------------- Render ---------------- */
@@ -1223,18 +1256,41 @@ function renderLk(pane){
   {const secs=sectionStats(); if(secs.length>1||(secs[0]&&secs[0].ten!=='Toàn tuyến')){html+=`<table class="lk" style="margin:0 0 14px;min-width:620px"><thead><tr><th>Đoạn tuyến</th><th style="text-align:right">Chiều dài (m)</th><th style="text-align:right">Số VT</th><th style="text-align:right">Néo</th><th style="text-align:right">Đỡ</th></tr></thead><tbody>${secs.map(x=>`<tr><td>${esc(x.ten)}</td><td class="num">${fmt(x.len,2)}</td><td class="num">${x.nCot}</td><td class="num">${x.nNeo}</td><td class="num">${x.nDo}</td></tr>`).join('')}<tr class="gh"><td>Tổng cộng</td><td class="num">${fmt(lk.len,2)}</td><td class="num">${lk.nCot}</td><td class="num">${lk.nNeo}</td><td class="num">${lk.nDo}</td></tr></tbody></table>`}}
   if(lk.unknown.length) html+=`<div class="warnbox">Mã có trong bảng kê nhưng chưa có trong danh mục (chưa được liệt kê): ${lk.unknown.map(u=>esc(u.ma)+' ('+fmt(u.sl)+')').join(', ')}</div>`;
   html+=`<label style="font-size:12px;color:var(--mute)"><input type="checkbox" id="hideZero" ${window._hz!==false?'checked':''}> Ẩn vật liệu số lượng 0</label>
-   <table class="lk" style="margin-top:8px;min-width:720px"><thead><tr><th>STT</th><th>Tên vật liệu</th><th>Mã hiệu</th><th>Đơn vị</th><th style="text-align:right">Số lượng</th><th>Ghi chú</th></tr></thead><tbody>`;
+   <table class="lk" id="lkMain" style="margin-top:8px;min-width:720px"><thead><tr><th>STT</th><th>Tên vật liệu</th><th>Mã hiệu</th><th>Đơn vị</th><th style="text-align:right">Số lượng</th><th>Ghi chú</th></tr></thead><tbody>`;
   let stt=0; const hz=window._hz!==false;
-  allGroups().forEach(([g,gn])=>{
-    const its=lk.items.filter(x=>x.nhom===g&&(!hz||x.sl));
-    if(!its.length) return;
+  const LX=lkX(), dis=canWrite?'':'disabled';
+  const lxRow=(x,j)=>{const inp=(k,cls,ph,extra)=>`<input ${dis} data-lx="${j}" data-k="${k}" class="${cls||''}" value="${esc(x[k]??'')}" placeholder="${ph||''}" ${extra||''}>`;
+    return `<tr class="lxrow"><td style="white-space:nowrap"><button class="xdel" data-lxd="${j}" title="Xoá dòng" ${dis}>×</button>${++stt}</td><td>${inp('ten','','Tên vật liệu, khối lượng…')}</td><td>${inp('ma','mono','mã (tuỳ chọn)','list="lxMa"')}</td><td>${inp('dvt','','đơn vị')}</td><td>${inp('sl','n','0','inputmode="decimal" style="text-align:right"')}</td><td><div style="display:flex;align-items:center;gap:4px">${inp('gc','','ghi chú')}<span class="mtag">(thêm dòng thủ công)</span></div></td></tr>`};
+  const addBtn=g=>canWrite?`<tr class="lxadd"><td></td><td colspan="5"><button class="lnk" data-lxa="${esc(g)}">+ thêm dòng thủ công</button></td></tr>`:'';
+  const shown=new Set();
+  [...allGroups(),[LX_KHAC,'Vật liệu khác (ngoài bảng kê)']].forEach(([g,gn])=>{
+    const its=g===LX_KHAC?[]:lk.items.filter(x=>x.nhom===g&&(!hz||x.sl));
+    const ex=LX.map((x,j)=>[x,j]).filter(([x])=>(x.nhom||LX_KHAC)===g);
+    if(!its.length&&!ex.length) return; shown.add(g);
     html+=`<tr class="gh"><td colspan="6">${esc(gn)}</td></tr>`;
     its.forEach(x=>{html+=`<tr class="${x.sl?'':'zero'}"><td>${++stt}</td><td>${esc(x.ten)}</td><td class="mono">${esc(x.ma)}</td><td>${esc(x.dvt)}</td><td class="num">${fmt(x.sl,2)}</td><td>${num(x.hh)?'Đã tính '+num(x.hh).toLocaleString('vi-VN')+'% hao hụt':''}</td></tr>`});
+    ex.forEach(([x,j])=>{html+=lxRow(x,j)});
+    html+=addBtn(g);
   });
+  const hidden=[...allGroups(),[LX_KHAC,'Vật liệu khác (ngoài bảng kê)']].filter(([g])=>!shown.has(g));
   if(lk.th.length){html+=`<tr class="gh"><td colspan="6">Phần thu hồi về kho (cáp quang)</td></tr>`;lk.th.forEach((x,j)=>{html+=`<tr><td>TH${j+1}</td><td>${esc(x.ten)}</td><td></td><td>${esc(x.dvt)}</td><td class="num">${fmt(x.sl,2)}</td><td></td></tr>`})}
   html+='</tbody></table>';
+  html+=`<datalist id="lxMa">${[...effCat(),...(catalog||[])].filter((c,i,a)=>c.ma&&a.findIndex(y=>y.ma===c.ma)===i).map(c=>`<option value="${esc(c.ma)}">${esc(c.ten||'')}</option>`).join('')}</datalist>`;
+  if(canWrite) html+=`<div class="tbar"><span style="font-size:13px">Thêm dòng vào nhóm</span><select id="lxG" style="width:auto">${hidden.map(([g,gn])=>`<option value="${esc(g)}">${esc(gn)}</option>`).join('')}</select><button id="lxAdd">+ Thêm dòng thủ công</button><span class="hint" style="margin:0">Mỗi nhóm có nút <b>+ thêm dòng thủ công</b> để nhập khối lượng không có trong bảng kê (VD: phụ kiện thêm, biển báo, đào đắp…). Dòng thêm được xuất vào đúng nhóm trong file Excel.</span></div>`;
   pane.innerHTML=html;
   $('#hideZero').onchange=e=>{window._hz=e.target.checked;renderLk(pane)};
+  const addLx=g=>{const dv={Cot:'Cột',Day:'m',CQ:'m',Chuoi:'Chuỗi',Mong:'Móng',HN:'Hộp'}[g]||'';cur.lkx=LX.concat([{id:uid(),nhom:g,ten:'',ma:'',dvt:dv,sl:'',gc:''}]);scheduleSave();renderLk(pane);const f=pane.querySelector(`[data-lx="${LX.length}"][data-k="ten"]`);if(f){f.focus();f.scrollIntoView({block:'nearest'})}};
+  const a1=$('#lxAdd');if(a1)a1.onclick=()=>addLx($('#lxG').value||LX_KHAC);
+  const tbd=pane.querySelector('#lkMain tbody');
+  tbd.addEventListener('input',e=>{const el=e.target;if(el.dataset.lx==null||!canWrite)return;LX[+el.dataset.lx][el.dataset.k]=el.value;scheduleSave()});
+  tbd.addEventListener('change',e=>{const el=e.target;if(el.dataset.lx==null||el.dataset.k!=='ma'||!canWrite)return;const x=LX[+el.dataset.lx];
+    const c=[...effCat(),...(catalog||[])].find(c=>c.ma===x.ma);if(c&&(!x.ten||!x.dvt)){if(!x.ten)x.ten=c.ten||'';if(!x.dvt)x.dvt=c.dvt||'';scheduleSave();renderLk(pane)}});
+  tbd.addEventListener('keydown',e=>{const el=e.target;if(el.dataset.lx==null||e.key!=='Enter')return;e.preventDefault();const j=+el.dataset.lx;
+    const g=LX[j].nhom||LX_KHAC, nx=LX.findIndex((x,i)=>i>j&&(x.nhom||LX_KHAC)===g);
+    if(nx<0){if(canWrite)addLx(g);return}const n=pane.querySelector(`[data-lx="${nx}"][data-k="${el.dataset.k}"]`);if(n)n.focus()});
+  tbd.addEventListener('click',e=>{const a=e.target.closest('[data-lxa]');if(a&&canWrite){addLx(a.dataset.lxa);return}
+    const b=e.target.closest('[data-lxd]');if(!b||!canWrite)return;const j=+b.dataset.lxd;const x=LX[j];
+    if((x.ten||x.sl)&&!confirm('Xoá dòng “'+(x.ten||x.ma||'')+'”?'))return;cur.lkx=LX.filter((_,i)=>i!==j);scheduleSave();renderLk(pane)});
 }
 
 /* ---------------- Thiết bị dự án ---------------- */
@@ -1654,10 +1710,12 @@ async function exportXlsx(){
   dataRow(wl,r,['','Tổng cộng',+lk.len.toFixed(2),lk.nCot,lk.nNeo,lk.nDo],{bold:true,fill:'FFF2F2F2',left:[1]});r+=2;
   const s2=wl.getCell(r,1);s2.value='II. LIỆT KÊ VẬT LIỆU – CẤU KIỆN CHÍNH';s2.font={name:F,size:11,bold:true};r++;
   const lkHead=r; headRow(wl,r,['Stt','Tên vật liệu','Mã hiệu','Đơn vị','Số lượng','Ghi chú'],30);r++; numRow(wl,r,6);r++;
-  let n=0; const ROMAN=['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV'];let gi=0;
-  allGroups().forEach(([g,gn])=>{const its=lk.items.filter(x=>x.nhom===g&&x.sl);if(!its.length)return;
+  let n=0; const ROMAN=['I','II','III','IV','V','VI','VII','VIII','IX','X','XI','XII','XIII','XIV','XV','XVI','XVII','XVIII','XIX','XX','XXI','XXII','XXIII','XXIV','XXV'];let gi=0;
+  const lxAll=lkX().filter(x=>x.ten||x.ma||String(x.sl??'').trim());
+  [...allGroups(),[LX_KHAC,'Vật liệu khác']].forEach(([g,gn])=>{const its=g===LX_KHAC?[]:lk.items.filter(x=>x.nhom===g&&x.sl);const ex=lxAll.filter(x=>(x.nhom||LX_KHAC)===g);if(!its.length&&!ex.length)return;
     dataRow(wl,r,[ROMAN[gi++],gn,'','','',''],{bold:true,fill:'FFF7F7F7',left:[1]});wl.mergeCells(r,2,r,6);r++;
-    its.forEach(x=>{dataRow(wl,r,[++n,x.ten,x.ma,x.dvt,+x.sl.toFixed(2),num(x.hh)?`Đã tính ${num(x.hh).toLocaleString('vi-VN')}% hao hụt`:''],{left:[1,5]});r++})});
+    its.forEach(x=>{dataRow(wl,r,[++n,x.ten,x.ma,x.dvt,+x.sl.toFixed(2),num(x.hh)?`Đã tính ${num(x.hh).toLocaleString('vi-VN')}% hao hụt`:''],{left:[1,5]});r++});
+    ex.forEach(x=>{dataRow(wl,r,[++n,x.ten||'',x.ma||'',x.dvt||'',String(x.sl??'').trim()?+num(x.sl).toFixed(2):'',[x.gc,'(thêm dòng thủ công)'].filter(Boolean).join(' ')],{left:[1,5]});r++})});
   if(lk.th.length){dataRow(wl,r,[ROMAN[gi++],'Phần thu hồi về kho (cáp quang)','','','',''],{bold:true,fill:'FFF7F7F7',left:[1]});wl.mergeCells(r,2,r,6);r++;
     lk.th.forEach((x,j)=>{dataRow(wl,r,[j+1,x.ten,'',x.dvt,+x.sl.toFixed(2),''],{left:[1]});r++})}
   page(wl,'portrait',9,`${lkHead}:${lkHead+1}`);
@@ -1681,18 +1739,19 @@ async function exportXlsx(){
   page(wt,'landscape',8,'3:5');
 
   /* ---- Sheet cáp quang ---- */
-  const hasCq=rows.some(x=>x.type!=='sec'&&(x.cq||CQ_COLS.some(c=>c[3]==='n'&&num(x[c[0]]))));
+  const hasCq=cqAll().some(x=>x.type!=='sec'&&(x.cq||CQ_COLS.some(c=>c[3]==='n'&&num(x[c[0]]))));
   if(hasCq){
     const wc=wb.addWorksheet('TKCQ',{views:[{state:'frozen',xSplit:2,ySplit:5,showGridLines:false}]});
     const nC=CQ_COLS.length+7;
     title(wc,1,'BẢNG TỔNG KÊ CÁP QUANG – '+projTitle,nC,13); head2(wc,3,['STT','Tên vị trí','Loại cột','Công dụng','Khoảng cột (m)'],CQ_COLS,['Chiều dài cáp (m)','Ru lô (m)']); numRow(wc,5,nC);
     wc.columns=[{width:5},{width:10},{width:13},{width:11},{width:9},...CQ_COLS.map(c=>({width:Math.max(7,Math.round(c[2]/7))})),{width:11},{width:10}];
     r=6; let sq=0;
-    rows.forEach((x,i)=>{
+    cqAll().forEach((x,i)=>{
+      if(i===rows.length){dataRow(wc,r,['','CÁC ĐOẠN TUYẾN CÁP QUANG BỔ SUNG',...Array(nC-2).fill('')],{bold:true,fill:'FFDFE9F5',left:[1]});wc.mergeCells(r,2,r,nC);r++}
       if(x.type==='sec'){dataRow(wc,r,['',[x.vt,x.gc].filter(Boolean).join('. '),...Array(nC-2).fill('')],{bold:true,fill:'FFEEF3FA',left:[1]});wc.mergeCells(r,2,r,nC);r++;return}
       const vals=[++sq,x.vt||'',x.cot||'',x.cd||'',nv(x.kc),...CQ_COLS.map(([k,,,kind])=>kind==='n'?nv(x[k]):(x[k]??'')),cqc.per[i]?+cqc.per[i].toFixed(2):'',cqc.rulo[i]?+cqc.rulo[i].len.toFixed(1):''];
       dataRow(wc,r,vals,{size:9,left:[5+CQ_COLS.findIndex(c=>c[0]==='q_gc')]});r++});
-    dataRow(wc,r,['','Tổng','','',+rows.reduce((s,x)=>s+(x.type==='sec'?0:num(x.kc)),0).toFixed(2),...CQ_COLS.map(([k,,,kind])=>kind==='n'&&!NO_SUM.has(k)?colSum(k)||'':''),+cqc.len.toFixed(2),''],{bold:true,size:9,fill:'FFF2F2F2'});
+    dataRow(wc,r,['','Tổng','','',+cqAll().reduce((s,x)=>s+(x.type==='sec'?0:num(x.kc)),0).toFixed(2),...CQ_COLS.map(([k,,,kind])=>kind==='n'&&!NO_SUM.has(k)?colSum(k)||'':''),+cqc.len.toFixed(2),''],{bold:true,size:9,fill:'FFF2F2F2'});
     page(wc,'landscape',9,'3:5');
   }
 
