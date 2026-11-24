@@ -70,6 +70,13 @@ tr.lxadd td{padding:2px 8px!important;border-bottom:1px solid var(--line)}
 .pane{flex:1;overflow:auto;min-height:0;padding:12px 16px 40px}
 .kpis{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;min-width:120px}
+.mdset span small{color:var(--mute);font-weight:400}
+.mdrow{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}
+.mdrow label{font-size:12px;font-weight:600;color:var(--ink);margin:0}
+.mdrow input.n{width:62px;padding:4px 6px;text-align:right;background:#fffbe8}
+.mdrow select{width:auto;min-width:120px;padding:4px 6px;background:#fffbe8}
+.mdrow button{padding:5px 12px}
+.mdrow .mdow{font-weight:400;display:flex;gap:4px;align-items:center;color:var(--mute)}.mdrow .mdow input{width:auto}
 .kpi span{display:block;color:var(--mute);font-size:11px}
 .kpi b{font-size:17px;font-family:var(--mono);font-weight:500}
 .hint{color:var(--mute);font-size:12px;margin:0 0 10px;line-height:1.55}
@@ -1141,6 +1148,8 @@ function renderTab(){
 }
 
 function groupItems(group){let it=effCat().filter(c=>c.nhom===group&&c.ma);if(!it.length&&projCat().length)it=(catalog||[]).filter(c=>c.nhom===group&&c.ma);return it}
+// dòng mới: điền sẵn dây dẫn / dây chống sét áp dụng cho dự án
+function newRow(){const r={id:uid()};const m=(cur&&cur.macDinh)||{};['nday','day','ncs','cs'].forEach(k=>{if(m[k])r[k]=m[k]});return r}
 function optsFor(group,val){
   const items=groupItems(group);
   const has=!val||items.some(c=>c.ma===val);
@@ -1174,6 +1183,10 @@ function renderGrid(pane){
     <div class="kpi"><span>Chiều dài tuyến (m)</span><b id="kLen">${fmt(lk.len,1)}</b></div>
     <div class="kpi"><span>Số vị trí cột</span><b id="kCot">${lk.nCot}</b></div>
     <div class="kpi"><span>Cột néo / đỡ</span><b id="kNeo">${lk.nNeo} / ${lk.nDo}</b></div>
+    ${(()=>{const md=cur.macDinh||{},dis=canWrite?'':'disabled';return `<div class="kpi mdset"><span>Dây áp dụng cho dự án <small>(tự điền vào bảng kê, vẫn sửa được từng ô)</small></span>
+      <div class="mdrow"><label>Dây dẫn</label><input ${dis} id="mdNday" class="n" inputmode="decimal" placeholder="số sợi" value="${esc(md.nday||'')}"><select ${dis} id="mdDay">${optsFor('Day',md.day||'')}</select>
+      <label style="margin-left:8px">Dây chống sét</label><input ${dis} id="mdNcs" class="n" inputmode="decimal" placeholder="số sợi" value="${esc(md.ncs||'')}"><select ${dis} id="mdCs">${optsFor('Day',md.cs||'')}</select>
+      ${canWrite?`<button class="pri" id="mdApply">Áp dụng</button><label class="mdow"><input type="checkbox" id="mdOver"> ghi đè cả ô đã nhập</label>`:''}</div></div>`})()}
   </div>
   <p class="hint">Nền vàng: nhập. Nền xám: tự tính. Mỗi ô một mã, số lượng ghi ở cột SL bên cạnh (VD "36ND-16a" → chọn ND-16a, SL 36). Khoảng cột ghi ở dòng của cột cuối khoảng. Dòng đoạn tuyến (A, B…) dùng để phân đoạn, không tính khối lượng. <b>Chèn dòng:</b> rê chuột vào số thứ tự rồi bấm ＋ (chèn phía trên) hoặc ⋮, bấm chuột phải vào dòng, hoặc Ctrl+Enter để chèn dòng mới bên dưới ô đang nhập.</p>
   ${badCodes.length?`<div class="warnbox">Có mã không nằm trong danh sách thiết bị (ô tô cam): ${badCodes.map(esc).join(', ')}. Thêm mã ở tab <b>Thiết bị dự án</b> để chọn được và cộng vào liệt kê.</div>`:''}
@@ -1196,8 +1209,14 @@ function renderGrid(pane){
   if(canWrite) tb.addEventListener('contextmenu',e=>{const tr=e.target.closest('tr');if(!tr||!tr.parentElement)return;const i=[...tr.parentElement.children].indexOf(tr);if(i<0||i>=rows.length)return;e.preventDefault();rowMenu(i,e.clientX,e.clientY)});
   tb.addEventListener('keydown',onKey);
   if(canWrite){
-    $('#addRow').onclick=()=>{rows.push({id:uid()});scheduleSave();renderGrid(pane);focusCell(rows.length-1,'vt')};
-    $('#add5').onclick=()=>{for(let j=0;j<5;j++)rows.push({id:uid()});scheduleSave();renderGrid(pane)};
+    $('#addRow').onclick=()=>{rows.push(newRow());scheduleSave();renderGrid(pane);focusCell(rows.length-1,'vt')};
+    $('#add5').onclick=()=>{for(let j=0;j<5;j++)rows.push(newRow());scheduleSave();renderGrid(pane)};
+    const md=()=>cur.macDinh||(cur.macDinh={});
+    [['#mdNday','nday'],['#mdDay','day'],['#mdNcs','ncs'],['#mdCs','cs']].forEach(([sel,k])=>{const el=$(sel);if(!el)return;el.addEventListener(el.tagName==='SELECT'?'change':'input',()=>{md()[k]=el.value.trim();scheduleSave()})});
+    $('#mdApply').onclick=()=>{const m=md(),ow=$('#mdOver').checked;const keys=['nday','day','ncs','cs'].filter(k=>m[k]);
+      if(!keys.length){toast('Chọn số sợi / loại dây trước khi áp dụng');return}
+      let n=0;rows.forEach(r=>{if(r.type==='sec')return;let ch=false;keys.forEach(k=>{if(ow||r[k]==null||r[k]===''){if(r[k]!==m[k]){r[k]=m[k];ch=true}}});if(ch)n++});
+      scheduleSave();renderGrid(pane);toast(n?`Đã điền dây cho ${n} vị trí`:'Không có ô nào cần điền (các ô đã có dữ liệu – tích “ghi đè” nếu muốn thay)')};
     $('#addSec').onclick=()=>{rows.push({id:uid(),type:'sec'});scheduleSave();renderGrid(pane);focusCell(rows.length-1,'vt')};
     $('#paste').onclick=pasteDialog;
     $('#colMgr').onclick=colManager;
@@ -1222,8 +1241,8 @@ function refreshAuto(){const a=calcAuto();rows.forEach((r,i)=>{const x=document.
 function refreshKpi(){const lk=calcLietke();const a=$('#kLen'),b=$('#kCot'),c=$('#kNeo');if(a)a.textContent=fmt(lk.len,1);if(b)b.textContent=lk.nCot;if(c)c.textContent=lk.nNeo+' / '+lk.nDo}
 function rowAction(a,i,n){
   const pane=$('#pane'); let focusAt=null;
-  if(a==='insAbove'){rows.splice(i,0,...Array.from({length:n||1},()=>({id:uid()})));focusAt=i}
-  else if(a==='ins'){rows.splice(i+1,0,...Array.from({length:n||1},()=>({id:uid()})));focusAt=i+1}
+  if(a==='insAbove'){rows.splice(i,0,...Array.from({length:n||1},()=>newRow()));focusAt=i}
+  else if(a==='ins'){rows.splice(i+1,0,...Array.from({length:n||1},()=>newRow()));focusAt=i+1}
   else if(a==='secAbove'){rows.splice(i,0,{id:uid(),type:'sec'});focusAt=i}
   else if(a==='dupRow'){const c={...rows[i],id:uid()};rows.splice(i+1,0,c);focusAt=i+1}
   else return false;
@@ -1270,7 +1289,7 @@ function onRowBtn(e){
 }
 function onKey(e){
   const el=e.target; if(el.dataset.i==null) return;
-  if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&canWrite){e.preventDefault();const i=+el.dataset.i,k=el.dataset.k;rows.splice(i+1,0,{id:uid()});scheduleSave();renderGrid($('#pane'));focusCell(i+1,k);return}
+  if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)&&canWrite){e.preventDefault();const i=+el.dataset.i,k=el.dataset.k;rows.splice(i+1,0,newRow());scheduleSave();renderGrid($('#pane'));focusCell(i+1,k);return}
   const i=+el.dataset.i,k=el.dataset.k;
   if(e.key==='Enter'||(e.key==='ArrowDown'&&el.tagName==='INPUT')){e.preventDefault();let j=i+1;while(j<rows.length&&rows[j].type==='sec'&&!['vt','gc'].includes(k))j++; if(j>=rows.length&&e.key==='Enter'&&canWrite){rows.push({id:uid()});scheduleSave();renderGrid($('#pane'))} focusCell(Math.min(j,rows.length-1),k)}
   if(e.key==='ArrowUp'&&el.tagName==='INPUT'){e.preventDefault();let j=i-1;while(j>0&&rows[j].type==='sec'&&!['vt','gc'].includes(k))j--;focusCell(Math.max(j,0),k)}
