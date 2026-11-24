@@ -1101,7 +1101,10 @@ function renderCq(pane){
   const towerCells=(r,i)=>`<td class="auto c1" style="text-align:left;color:var(--ink)">${esc(r.vt||'')}</td><td class="auto" style="text-align:left">${esc(r.cot||'')}</td><td class="auto" style="text-align:left">${esc(r.cd||'')}</td><td class="auto">${r.kc?esc(r.kc):''}</td>`;
   pane.innerHTML=`<div class="kpis">
     <div class="kpi"><span>Chiều dài cáp quang (m)</span><b id="cqLen">${fmt(cq.len,1)}</b></div>
-    <div class="kpi"><span>Số ru lô (đoạn giữa các hộp nối)</span><b id="cqRl">${cq.nRulo}</b></div></div>
+    <div class="kpi"><span>Số ru lô (đoạn giữa các hộp nối)</span><b id="cqRl">${cq.nRulo}</b></div>
+    ${(()=>{const md=cur.macDinh||{},dis=canWrite?'':'disabled';return `<div class="kpi mdset"><span>Cáp quang áp dụng cho dự án <small>(tự điền vào bảng kê, vẫn sửa được từng ô)</small></span>
+      <div class="mdrow"><label>Số dây</label><input ${dis} id="mdQnd" class="n" inputmode="decimal" placeholder="1" value="${esc(md.q_nd||'')}"><label>Loại cáp</label><select ${dis} id="mdCq">${optsFor('CQ',md.cq||'')}</select>
+      ${canWrite?`<button class="pri" id="mdCqApply">Áp dụng</button><label class="mdow"><input type="checkbox" id="mdCqOver"> ghi đè cả ô đã nhập</label>`:''}</div></div>`})()}</div>
   <p class="hint">Dùng chung danh sách vị trí với tab Bảng kê (thêm, chèn, xoá vị trí ở tab đó). Cáp quang đi trên đoạn tuyến khác (không có trong bảng kê đường dây) thì bấm <b>+ Đoạn tuyến khác</b> ở cuối bảng để kê thêm bên dưới. Chiều dài cáp mỗi dòng = khoảng cột × số dây (để trống = 1) + dự phòng lên xuống cột + cáp thêm, chỉ tính ở dòng có chọn <b>loại cáp</b>. Ru lô được cắt tại vị trí có hộp nối. Các cột <b>TH</b> là phần thu hồi về kho. Mẹo: chọn loại cáp ở dòng đầu rồi bấm <b>Điền loại cáp xuống</b>.</p>
   <div style="overflow:auto;max-height:calc(100vh - 290px);border:1px solid var(--line);border-radius:6px">
   <table class="grid"><thead><tr><th rowspan="2" class="c0" style="width:56px;min-width:56px">TT</th><th rowspan="2" class="c1" style="min-width:74px">Tên vị trí</th><th rowspan="2" style="min-width:100px">Loại cột</th><th rowspan="2" style="min-width:80px">Công dụng</th><th rowspan="2" style="min-width:60px">Khoảng cột (m)</th>
@@ -1119,6 +1122,7 @@ function renderCq(pane){
   const tb=pane.querySelector('tbody');
   const upd=()=>{const c=calcCq();refreshFoot();const kf=pane.querySelector('[data-f="_kcall"]');if(kf)kf.textContent=fmt(cqAll().reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),2);cqAll().forEach((r,i)=>{const y=pane.querySelector(`[data-cl="${i}"]`);if(y)y.textContent=c.per[i]?fmt(c.per[i],2):'';const x=pane.querySelector(`[data-rl="${i}"]`);if(x)x.textContent=c.rulo[i]?`#${c.rulo[i].n}: ${fmt(c.rulo[i].len,1)}`:''});$('#cqLen').textContent=fmt(c.len,1);$('#cqRl').textContent=c.nRulo};
   const rowAt=i=>i<rows.length?rows[i]:X[i-rows.length];
+  const cqNew=()=>{const r={id:uid()},m=cur.macDinh||{};['q_nd','cq'].forEach(k=>{if(m[k])r[k]=m[k]});return r};
   const h=e=>{const el=e.target;if(el.dataset.i==null)return;const r=rowAt(+el.dataset.i);if(!r)return;r[el.dataset.k]=el.value;if(el.tagName==='SELECT')el.parentElement.classList.remove('bad');scheduleSave();upd()};
   tb.addEventListener('input',h); tb.addEventListener('change',h);
   const addX=(arr,focus)=>{if(!canWrite)return;cur.cqx=cqX().concat(arr);if(!Array.isArray(cur.cqx))cur.cqx=[];scheduleSave();renderCq(pane);if(focus!=null)focusCell(focus.i,focus.k)};
@@ -1132,9 +1136,15 @@ function renderCq(pane){
     const has=r.type==='sec'?r.gc||r.vt:Object.keys(r).some(k=>k!=='id'&&r[k]!==''&&r[k]!=null);
     if(has&&!confirm('Xoá dòng này?'))return; cur.cqx=X.filter((_,x)=>x!==j);scheduleSave();renderCq(pane)});
   $('#cqSec').onclick=()=>{const n=X.filter(r=>r.type==='sec').length;addX([{id:uid(),type:'sec',vt:String.fromCharCode(67+n>90?90:67+n),gc:''},{id:uid()}],{i:rows.length+X.length,k:'gc'})};
-  $('#cqRow').onclick=()=>addX([{id:uid()}],{i:rows.length+X.length,k:'vt'});
-  $('#cqRow5').onclick=()=>addX(Array.from({length:5},()=>({id:uid()})),{i:rows.length+X.length,k:'vt'});
+  $('#cqRow').onclick=()=>addX([cqNew()],{i:rows.length+X.length,k:'vt'});
+  $('#cqRow5').onclick=()=>addX(Array.from({length:5},()=>cqNew()),{i:rows.length+X.length,k:'vt'});
   const cd=$('#cqDef'); if(cd) cd.onclick=()=>{catalog=catalog||[];DEFAULT_CAT.filter(c=>['CQ','HN','PKCQ'].includes(c.nhom)&&!catalog.some(x=>x.ma===c.ma)).forEach(c=>catalog.push({...c}));saveCat(true);renderCq(pane);toast('Đã thêm mã cáp quang vào danh mục chung')};
+  {const md=()=>cur.macDinh||(cur.macDinh={});
+   [['#mdQnd','q_nd'],['#mdCq','cq']].forEach(([sel,k])=>{const el=$(sel);if(!el)return;el.addEventListener(el.tagName==='SELECT'?'change':'input',()=>{md()[k]=el.value.trim();scheduleSave()})});
+   const ap=$('#mdCqApply'); if(ap) ap.onclick=()=>{const m=md(),ow=$('#mdCqOver').checked;const keys=['q_nd','cq'].filter(k=>m[k]);
+     if(!keys.length){toast('Chọn số dây / loại cáp trước khi áp dụng');return}
+     let n=0;cqAll().forEach(r=>{if(r.type==='sec')return;let ch=false;keys.forEach(k=>{if(ow||r[k]==null||r[k]===''){if(r[k]!==m[k]){r[k]=m[k];ch=true}}});if(ch)n++});
+     scheduleSave();renderCq(pane);toast(n?`Đã điền cáp quang cho ${n} vị trí`:'Không có ô nào cần điền (các ô đã có dữ liệu – tích “ghi đè” nếu muốn thay)')};}
   $('#cqFill').onclick=()=>{let last='';let n=0;cqAll().forEach(r=>{if(r.type==='sec')return;if(r.cq)last=r.cq;else if(last&&num(r.kc)){r.cq=last;n++}});if(n){scheduleSave();renderCq(pane)}toast(n?`Đã điền ${n} dòng`:'Không có dòng trống nào để điền')};
 }
 
@@ -1149,7 +1159,7 @@ function renderTab(){
 
 function groupItems(group){let it=effCat().filter(c=>c.nhom===group&&c.ma);if(!it.length&&projCat().length)it=(catalog||[]).filter(c=>c.nhom===group&&c.ma);return it}
 // dòng mới: điền sẵn dây dẫn / dây chống sét áp dụng cho dự án
-function newRow(){const r={id:uid()};const m=(cur&&cur.macDinh)||{};['nday','day','ncs','cs'].forEach(k=>{if(m[k])r[k]=m[k]});return r}
+function newRow(){const r={id:uid()};const m=(cur&&cur.macDinh)||{};['nday','day','ncs','cs','q_nd','cq'].forEach(k=>{if(m[k])r[k]=m[k]});return r}
 function optsFor(group,val){
   const items=groupItems(group);
   const has=!val||items.some(c=>c.ma===val);
