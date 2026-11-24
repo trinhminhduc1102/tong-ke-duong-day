@@ -704,10 +704,11 @@ function dxfText(buf){
 }
 function dxfClean(s,mtext){
   s=s.replace(/\\U\+([0-9A-Fa-f]{4})/g,(m,h)=>String.fromCharCode(parseInt(h,16)));
+  s=s.replace(/^(\s*M?)[Ðð](?=\s*\d)/,'$1Đ'); // một số font ghi chữ Đ bằng ký tự Ð (Eth)
   if(mtext){s=s.replace(/\\P/g,' ').replace(/\\S([^;]*);/g,(m,a)=>a.replace(/[\^#]/,'/')).replace(/\\[fFHCcTQWApa][^;]*;/g,'').replace(/\\[LlOoKkN~]/g,'').replace(/\\\\/g,'\\').replace(/[{}]/g,'')}
   s=s.replace(/%%[dD]/g,'°').replace(/%%[cC]/g,'Ø').replace(/%%[pP]/g,'±').replace(/%%[uUoOkK]/g,'').replace(/%%%/g,'%');
   s=vn(s.replace(/\s+/g,' ').trim());
-  return s.replace(/^M§/,'MĐ').replace(/^§/,'Đ');
+  return s.replace(/^M§/,'MĐ').replace(/^§/,'Đ').replace(/^(M?)[Ðð](?=\d|\s*\d)/,'$1Đ');
 }
 function dxfEntities(txt){
   const L=txt.split(/\r?\n/), out=[], dims=[], ins=[]; let sec='', e=null, expectSec=false, lastIns=null;
@@ -749,8 +750,10 @@ function dxfParseProfile({texts:ents,dims,ins=[]},opt={}){
   ents.filter(t=>/^(PT|P\.T|Cột cổng|CC)$/i.test(t.s)&&Math.abs(t.y-yMed)<15*h&&Math.abs(t.h-h)<h*.5).forEach(t=>{
     const tba=ents.find(u=>/^TBA/i.test(u.s)&&Math.abs(u.x-t.x)<8*h&&Math.abs(u.y-t.y)<4*h);towers.push({x:t.x,y:t.y,pt:true,vt:tba?t.s+' '+tba.s:t.s})});
   // số thứ tự: số nguyên cùng hàng, bên trái ký hiệu cột
-  const nums=ents.filter(t=>/^\d{1,3}[a-z'’"]{0,2}$/.test(t.s));
-  towers.forEach(T=>{if(T.pt)return;const n=near(nums,t=>{const dx=T.x-t.x,dy=Math.abs(T.y-t.y);return dx>0&&dx<14*h&&dy<1.5*Math.max(h,t.h)?dx+dy*3:null});if(n)T.vt=n.s});
+  const nums=ents.filter(t=>/^\d{1,3}[A-Za-z'’"]{0,2}$/.test(t.s));
+  const tags=ents.filter(t=>/^[A-ZĐ]{2,6}$/.test(t.s)&&!/^(PT|TBA|CC)$/.test(t.s));
+  towers.forEach(T=>{if(T.pt)return;const n=near(nums,t=>{const dx=T.x-t.x,dy=Math.abs(T.y-t.y);return dx>0&&dx<14*h&&dy<1.5*Math.max(h,t.h)?dx+dy*3:null});
+    if(n){T.vt=n.s;const tg=tags.find(u=>Math.abs(u.x-n.x)<1.5*n.h&&Math.abs(u.y-n.y)<2*n.h&&u!==n);if(tg)T.vt=n.s+' ('+tg.s+')'}});
   // móng: ngay dưới ký hiệu cột
   const mongs=ents.filter(t=>DXF_MONG.test(t.s.replace(/\s+/g,'')));
   towers.forEach(T=>{if(T.pt)return;const m=near(mongs,t=>{const dx=Math.abs(T.x-t.x),dy=T.y-t.y;return dy>0&&dy<4*h&&dx<8*h?dx+dy:null});if(m){const mm=m.s.replace(/\s+/g,'').match(/^(\d{1,2})?(.+)$/);T.mong=mm[2];if(mm[1])T.qmong=mm[1]}});
@@ -770,43 +773,75 @@ function dxfParseProfile({texts:ents,dims,ins=[]},opt={}){
   // bỏ ký hiệu nằm ngoài mặt cắt (chú thích, bảng ký hiệu…): không có số thứ tự trong khi đa số có
   const withVt=towers.filter(t=>t.vt||t.fromSym);
   if(withVt.length>=towers.length*0.6&&withVt.length<towers.length){const drop=towers.length-withVt.length;towers=withVt;warn.push(`Bỏ qua ${drop} nhãn cột không có số thứ tự bên cạnh (thường là chú thích, bảng ký hiệu).`)}
-  // thứ tự: theo số thứ tự nếu không trùng, không thì theo khung (hàng) rồi trái → phải
-  const nt=towers.filter(t=>!t.pt);
-  if(!nt.some(t=>t.fromSym)&&nt.every(t=>/^\d+/.test(t.vt||''))&&new Set(nt.map(t=>t.vt)).size===nt.length){
-    nt.sort((a,b)=>parseInt(a.vt)-parseInt(b.vt)||a.vt.localeCompare(b.vt));
-    const asc=nt.length<2||nt[nt.length-1].x>=nt[0].x;
-    towers.filter(t=>t.pt).forEach(p=>{(asc?p.x<nt[0].x:p.x>nt[0].x)?nt.unshift(p):nt.push(p)}); towers=nt}
-  else{const byY=towers.slice().sort((a,b)=>b.y-a.y);let fr=0;byY.forEach((t,i)=>{if(i&&byY[i-1].y-t.y>25*h)fr++;t.fr=fr});towers.sort((a,b)=>a.fr-b.fr||(a.ax??a.x)-(b.ax??b.x))}
+  // thứ tự: luôn đọc từ TRÁI sang PHẢI theo tim cột. Bản vẽ nhiều khung (tờ) thì xếp theo khung:
+  // mỗi khung nhận biết bằng dòng tiêu đề "Hướng tuyến" / "Khoảng cách cộng dồn" ở bảng dưới mặt cắt.
+  const hOk=t=>t.h>=0.3*h;
+  let hdr=ents.filter(t=>hOk(t)&&/^hướng tuyến$/i.test(t.s)); if(!hdr.length) hdr=ents.filter(t=>hOk(t)&&/^khoảng cách cộng dồn$/i.test(t.s));
+  hdr=hdr.filter((t,i)=>!hdr.slice(0,i).some(u=>Math.abs(u.x-t.x)<5*h&&Math.abs(u.y-t.y)<5*h));
+  const fx=T=>T.ax??T.x;
+  let frames=[];
+  if(hdr.length>1){
+    const hh=med(hdr.map(t=>t.h));
+    frames=hdr.slice().sort((a,b)=>Math.round(a.x/(400*hh))-Math.round(b.x/(400*hh))||b.y-a.y);
+    towers.forEach(T=>{const c=frames.map((f,i)=>({f,i})).filter(({f})=>f.y<T.y&&f.x<fx(T));
+      if(!c.length){let bi=0,bd=1e99;frames.forEach((f,i)=>{const d=Math.hypot(f.x-fx(T),f.y-T.y);if(d<bd){bd=d;bi=i}});T.fr=bi;return}
+      const dmin=Math.min(...c.map(({f})=>T.y-f.y));
+      T.fr=c.filter(({f})=>T.y-f.y<=dmin+60*hh).sort((a,b)=>b.f.x-a.f.x)[0].i});
+  } else towers.forEach(T=>T.fr=0);
+  towers.sort((a,b)=>a.fr-b.fr||fx(a)-fx(b));
+  // tờ sau thường vẽ lặp lại cột cuối của tờ trước → bỏ cột trùng ở chỗ nối khung
+  let dup=0; towers=towers.filter((T,i)=>{const P=towers[i-1];if(P&&P.fr!==T.fr&&(T.cot||'')===(P.cot||'')&&(T.vt||'')===(P.vt||'')&&(T.vt||T.cot)){dup++;return false}return true});
+  if(frames.length>1)warn.push(`Bản vẽ có ${frames.length} khung mặt cắt – đã đọc lần lượt từng khung, trong mỗi khung từ trái sang phải${dup?`, bỏ ${dup} cột vẽ lặp ở chỗ nối khung`:''}.`);
+  { const nums=towers.filter(t=>!t.pt&&/^\d+$/.test(t.vt||'')).map(t=>+t.vt); let bad=0; for(let i=1;i<nums.length;i++) if(nums[i]<nums[i-1]) bad++;
+    if(bad) warn.push(`Số thứ tự cột trên bản vẽ không tăng dần theo chiều từ trái sang phải ở ${bad} chỗ – kiểm tra lại nhãn số thứ tự trên bản vẽ.`); }
   // khoảng cột: ưu tiên kích thước (DIMENSION) giữa 2 cột, sau đó chữ "257m", cuối cùng tính theo toạ độ
   const hd=dims.filter(d=>d.x2-d.x1>5*h&&d.m>0);
   const sc=hd.length?med(hd.map(d=>d.m/(d.x2-d.x1))):1;
   const kcs=ents.filter(t=>DXF_KC.test(t.s)); let est=0;
   const tol=4*h;
-  for(let i=1;i<towers.length;i++){const A=towers[i-1],B=towers[i];if(Math.abs(A.y-B.y)>25*h)continue;
+  // gắn tim cột vào đầu mút đường kích thước gần nhất (mỗi đầu mút thuộc về cột gần nó nhất)
+  if(hd.length){
+    const eps=[];hd.forEach(d=>[d.x1,d.x2].forEach(x=>{if(!eps.some(e=>Math.abs(e-x)<0.5))eps.push(x)}));
+    eps.forEach(x=>{let best=null,bd=1e99;towers.forEach(T=>{if(T.sym)return;const d=Math.abs(fx(T)-x);if(d<bd){bd=d;best=T}});if(best&&bd<tol&&(best._snapD==null||bd<best._snapD)){best._snap=x;best._snapD=bd}});
+    towers.forEach(T=>{if(T._snap!=null&&T.ax==null)T.ax=T._snap});
+    // cột nằm giữa hai cột mà đường kích thước nối thẳng hai cột đó (bỏ qua nó) → cột của đường dây khác vẽ để tham khảo
+    const onChain=T=>T.sym||T._snap!=null;
+    const drop=[];
+    towers.forEach((B,i)=>{if(B.pt||onChain(B))return;const xb=fx(B);
+      const d=hd.find(d=>d.x1<xb-h&&d.x2>xb+h&&towers.some(A=>A!==B&&onChain(A)&&Math.abs(fx(A)-d.x1)<1)&&towers.some(C=>C!==B&&onChain(C)&&Math.abs(fx(C)-d.x2)<1));
+      if(d)drop.push(B)});
+    if(drop.length){towers=towers.filter(T=>!drop.includes(T));warn.push(`Bỏ qua ${drop.length} cột không nằm trong chuỗi kích thước khoảng cột (thường là cột của đường dây khác vẽ để tham khảo): ${drop.map(T=>(T.vt||'?')+' '+(T.cot||'')).join(', ')}.`)}
+  }
+  let cross=0;
+  for(let i=1;i<towers.length;i++){const A=towers[i-1],B=towers[i];if(A.fr!==B.fr){cross++;continue}
     const xa=A.ax??A.x, xb=B.ax??B.x, x0=Math.min(xa,xb),x1=Math.max(xa,xb);
     const d=hd.filter(d=>Math.abs(d.x1-x0)<tol&&Math.abs(d.x2-x1)<tol).sort((a,b)=>Math.abs(a.x1-x0)+Math.abs(a.x2-x1)-Math.abs(b.x1-x0)-Math.abs(b.x2-x1))[0];
     if(d){const tv=parseFloat((d.t||'').replace(/[^\d.,]/g,'').replace(',','.'));B.kc=isFinite(tv)&&tv>0&&!/<>/.test(d.t)?tv:d.m;A.ax=A.ax??(Math.abs(d.x1-xa)<Math.abs(d.x2-xa)?d.x1:d.x2);B.ax=B.ax??(Math.abs(d.x1-xb)<Math.abs(d.x2-xb)?d.x1:d.x2);continue}
     const ym=(A.y+B.y)/2,xm=(xa+xb)/2;
-    const k=near(kcs,t=>t.x>x0&&t.x<x1&&Math.abs(t.y-ym)<20*h?Math.abs(t.x-xm)+Math.abs(t.y-ym):null);
+    const k=near(kcs,t=>t.x>x0&&t.x<x1&&Math.abs(t.y-ym)<60*h?Math.abs(t.x-xm)+Math.abs(t.y-ym):null);
     if(k){B.kc=parseFloat(k.s.replace(',','.'));continue}
     B.kcEst=true;B.kc=null}
   for(let i=1;i<towers.length;i++){const A=towers[i-1],B=towers[i];if(B.kcEst){B.kc=Math.abs((B.ax??B.x)-(A.ax??A.x))*sc;est++}}
+  if(cross)warn.push(`${cross} khoảng cột nằm ở chỗ nối giữa hai khung bản vẽ – chưa xác định được, nhập tay.`);
   if(est)warn.push(`${est} khoảng cột không có kích thước ghi trên bản vẽ – đã tính theo toạ độ (đánh dấu *), cần kiểm tra lại.`);
   // góc lái: nhãn "G1", "G2"… ở hàng Hướng tuyến, kèm số đo góc (07đ43'20'' hoặc 07°43'20") và chữ Trái/Phải bên cạnh
-  const ANG=/^(\d{1,3}(?:[.,]\d+)?)\s*(?:°|º|đ|độ|d|o)\s*(?:(\d{1,2})\s*(?:['’′]|ph)?)?\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:''|"|”|″|’’|s)?)?\s*(Trái|Phải|T|P)?$/i;
-  const angs=ents.filter(t=>ANG.test(t.s)), dirs=ents.filter(t=>/^(Trái|Phải|Tr¸i|Ph¶i|lái trái|lái phải)$/i.test(t.s));
+  // số đo góc: 07đ43'20'' · 07°43'20" · T=62 32'45" · 4d19'13" … chữ Trái/Phải (T/P) đứng trước hoặc sau
+  const ANG=/^(?:(Trái|Phải|T|P)\s*[=:]?\s*)?(\d{1,3}(?:[.,]\d+)?)\s*(?:°|º|đ|độ|d|o|\s)\s*(\d{1,2})\s*(?:['’′]|ph)\s*(?:(\d{1,2}(?:[.,]\d+)?)\s*(?:''|"|”|″|’’|s)?)?\s*(Trái|Phải|T|P)?$/i;
+  const ANG2=/^(Trái|Phải|T|P)\s*[=:]\s*(\d{1,3})\s+(\d{1,2})\s+(\d{1,2}(?:[.,]\d+)?)$/i; // dạng T=40 20 48
+  const angOf=s=>{let m=s.match(ANG);if(!m){const k=s.match(ANG2);if(k)m=[k[0],k[1],k[2],k[3],k[4],'']}if(!m||!num(m[2]))return null;const hs=m[1]||m[5];return {D:m[2].replace(',','.'),M:m[3]||'',S:(m[4]||'').replace(',','.'),H:hs?(/^t/i.test(hs)?'T':'P'):''}};
+  const angs=ents.filter(t=>angOf(t.s)), dirs=ents.filter(t=>/^(Trái|Phải|lái trái|lái phải)$/i.test(t.s));
   ents.filter(t=>/^G\s*\d+\b/.test(t.s)).forEach(t=>{const ten=t.s.match(/^G\s*\d+/)[0].replace(/\s/g,'');
     let best=null,bd=1e99;towers.forEach(T=>{const d=Math.abs((T.ax??T.x)-t.x);if(d<bd){bd=d;best=T}});
     if(!best||bd>3*h||best.pt||best.goc&&best.goc.D!=null)return;
-    let g=null; const inl=t.s.replace(/^G\s*\d+\s*=?\s*/,'');
-    if(inl){const m=inl.match(ANG);if(m)g={D:m[1].replace(',','.'),M:m[2]||'',S:(m[3]||'').replace(',','.'),H:m[4]?(/^t/i.test(m[4])?'T':'P'):''}}
-    if(!g){const a=angs.filter(u=>Math.abs(u.x-t.x)<6*h&&Math.abs(u.y-t.y)<8*h).sort((u,v)=>Math.hypot(u.x-t.x,u.y-t.y)-Math.hypot(v.x-t.x,v.y-t.y))[0];
-      if(a){const m=a.s.match(ANG);g={D:m[1].replace(',','.'),M:m[2]||'',S:(m[3]||'').replace(',','.'),H:m[4]?(/^t/i.test(m[4])?'T':'P'):''};
-        if(!g.H){const d=dirs.filter(u=>Math.abs(u.y-a.y)<1.5*Math.max(h,a.h)&&a.x-u.x>0&&a.x-u.x<8*h).sort((u,v)=>(a.x-u.x)-(a.x-v.x))[0];if(d)g.H=/^(lái )?tr/i.test(vn(d.s))?'T':'P'}}}
+    let g=null; const inl=t.s.replace(/^G\s*\d+\s*=?\s*/,''); if(inl)g=angOf(inl);
+    if(!g){// số đo đặt cùng cột dọc với nhãn G (gần G nhất), ở dưới mặt cắt
+      const a=angs.filter(u=>Math.abs(u.x-t.x)<3*Math.max(h,u.h)&&u.y<best.y).sort((u,v)=>Math.abs(u.y-t.y)-Math.abs(v.y-t.y))[0];
+      if(a){g=angOf(a.s);
+        if(!g.H){const d=dirs.filter(u=>Math.abs(u.y-a.y)<1.5*Math.max(h,a.h)&&a.x-u.x>0&&a.x-u.x<8*h).sort((u,v)=>(a.x-u.x)-(a.x-v.x))[0];if(d)g.H=/^(lái )?tr/i.test(d.s)?'T':'P'}}}
     best.goc=g?{...g,ten}:{ten};
   });
-  towers.forEach(T=>{if(T.pt||!T.sym||(T.goc&&T.goc.D!=null))return;const gv=T.sym.a.GOC;if(!okv(gv)||/^0+$/.test(gv))return;const m=gv.replace(/^G\s*\d+\s*=\s*/,'').match(ANG);
-    if(m&&num(m[1])){T.goc={...(T.goc||{}),D:m[1].replace(',','.'),M:m[2]||'',S:(m[3]||'').replace(',','.'),H:m[4]?(/^t/i.test(m[4])?'T':'P'):''};T.gocAttr=true}});
+  towers.forEach(T=>{if(T.pt||!T.sym||(T.goc&&T.goc.D!=null))return;const gv=T.sym.a.GOC;if(!okv(gv)||/^0+$/.test(gv))return;const g=angOf(gv.replace(/^G\s*\d+\s*=\s*/,''));
+    if(g){T.goc={...(T.goc||{}),...g};T.gocAttr=true}});
   const round=opt.round!==false;
   const real=towers.filter(t=>!t.pt);
   // cột chỉ có ký hiệu, chưa có số thứ tự: đánh theo cột trước (VD 12 → 12a)
