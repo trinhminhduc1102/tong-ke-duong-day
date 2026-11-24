@@ -308,45 +308,111 @@ const FIREBASE_CONFIG = {
 const DATA_ROOT='Du lieu tong ke';
 /* ================= Lưu trữ trên Firestore ================= */
 // Mỗi "file" dữ liệu cũ (danh-muc.json, projects/xxx.json…) là 1 tài liệu trong collection "files".
+// Tiết kiệm hạn mức miễn phí: mọi người chỉ theo dõi trực tiếp các file nhỏ ở thư mục gốc (danh mục, thành viên)
+// và "thẻ tóm tắt" của từng dự án (thư mục _meta). Nội dung đầy đủ của dự án chỉ tải khi mở,
+// và chỉ người đang mở đúng dự án đó mới nhận cập nhật trực tiếp.
 let fbApp=null, fbAuth=null, fdb=null, fbUser=null;
-const fsCache=new Map(); // path -> {content,mtime,size}
-let fsReady=null, fsUnsub=null;
+const fsCache=new Map();   // path -> {content,mtime,size}  (file gốc + dự án đã tải)
+const fsMeta=new Map();    // path dự án -> {mtime, meta}
+let fsReady=null, fsUnsub=null, projUnsub=null, projWatchPath='';
 const docId=p=>p.replace(/\//g,'|');
+const PROJ_DIR=()=>DATA_ROOT+'/projects', META_DIR=()=>DATA_ROOT+'/_meta';
+const isProjPath=p=>p.startsWith(PROJ_DIR()+'/');
+const metaPathOf=p=>META_DIR()+'/'+p.split('/').pop();
+const projPathOfMeta=p=>PROJ_DIR()+'/'+p.split('/').pop();
 function startFilesListener(){
   if(fsUnsub) fsUnsub();
   fsReady=new Promise((res,rej)=>{let first=true;
-    fsUnsub=fdb.collection('files').onSnapshot(snap=>{
-      snap.docChanges().forEach(ch=>{const d=ch.doc.data();
-        if(ch.type==='removed') fsCache.delete(d.path); else fsCache.set(d.path,{content:d.content||'',mtime:d.mtime||0,size:(d.content||'').length})});
-      if(first){first=false;res()} else {try{poll()}catch(e){}}
+    fsUnsub=fdb.collection('files').where('dir','in',[DATA_ROOT,META_DIR()]).onSnapshot(snap=>{
+      snap.docChanges().forEach(ch=>{const d=ch.doc.data();if(!d.path)return;
+        if(d.dir===META_DIR()){const pp=projPathOfMeta(d.path);
+          if(ch.type==='removed') fsMeta.delete(pp); else{let m=null;try{m=JSON.parse(d.content||'null')}catch(e){}if(m)fsMeta.set(pp,{mtime:d.mtime||0,meta:m})}}
+        else if(ch.type==='removed') fsCache.delete(d.path); else fsCache.set(d.path,{content:d.content||'',mtime:d.mtime||0,size:(d.content||'').length})});
+      if(first){first=false;migrateMeta().then(res,res)} else {try{poll()}catch(e){}}
     },err=>{if(first){first=false;rej(err)} else setStatus('Mất kết nối dữ liệu: '+err.message,true)});
   });
   return fsReady;
 }
+// dự án tạo trước khi có thẻ tóm tắt: đọc một lần và tạo thẻ
+let migrated=false;
+async function migrateMeta(){
+  if(migrated)return; migrated=true;
+  try{const snap=await fdb.collection('files').where('dir','==',PROJ_DIR()).get();
+    for(const doc of snap.docs){const d=doc.data();if(!d.path||fsMeta.has(d.path))continue;
+      fsCache.set(d.path,{content:d.content||'',mtime:d.mtime||0,size:(d.content||'').length});
+      try{const m=projMeta(JSON.parse(d.content||'{}'),d.path,d.mtime||0);fsMeta.set(d.path,{mtime:d.mtime||0,meta:m});await writeMetaDoc(d.path,m,d.mtime||0)}catch(e){}}
+  }catch(e){}
+}
+function projMeta(d,path,mtime){const rs=d.rows||[];return {id:path.split('/').pop().replace(/\.json$/,''),name:d.name,tinh:d.tinh,cdt:d.cdt,gd:d.gd,gc:d.gc,updatedAt:d.updatedAt,updatedBy:d.updatedBy,createdBy:d.createdBy,chuSoHuu:d.chuSoHuu,nhanSu:d.nhanSu,phuTrach:d.phuTrach,trangThai:d.trangThai,han:d.han,isMau:!!d.isMau,
+  len:rs.reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),nRows:rs.filter(r=>r.type!=='sec'&&(r.cot||r.vt)).length,mtime}}
+async function writeMetaDoc(projPath,m,mtime){const mp=metaPathOf(projPath);
+  await fdb.collection('files').doc(docId(mp)).set({path:mp,dir:META_DIR(),content:JSON.stringify(m),mtime,by:fbUser?fbUser.uid:''})}
+// thẻ tóm tắt: ghi ngay khi đổi thông tin quan trọng; còn lại (số VT, chiều dài, giờ sửa) gộp, tối đa 3 phút/lần
+const metaPend={}, META_EVERY=180000;
+const metaKey=m=>JSON.stringify([m.name,m.tinh,m.cdt,m.gd,m.gc,m.chuSoHuu,m.nhanSu,m.phuTrach,m.trangThai,m.han,m.isMau,m.createdBy]);
+function queueMeta(path,m,mtime){
+  const old=fsMeta.get(path); fsMeta.set(path,{mtime,meta:m});
+  const st=metaPend[path]||(metaPend[path]={last:0,timer:null});
+  const urgent=!old||metaKey(old.meta)!==metaKey(m)||Date.now()-st.last>META_EVERY;
+  clearTimeout(st.timer); st.data={m,mtime};
+  const go=()=>{st.timer=null;st.last=Date.now();const x=st.data;st.data=null;if(x)writeMetaDoc(path,x.m,x.mtime).catch(()=>{})};
+  if(urgent) go(); else st.timer=setTimeout(go,META_EVERY-(Date.now()-st.last));
+}
+function flushMetaAll(){for(const p in metaPend){const st=metaPend[p];if(st.timer){clearTimeout(st.timer);st.timer=null;st.last=Date.now();const x=st.data;st.data=null;if(x)writeMetaDoc(p,x.m,x.mtime).catch(()=>{})}}}
+async function fetchProj(path){
+  const doc=await fdb.collection('files').doc(docId(path)).get();
+  if(!doc.exists){fsCache.delete(path);return null}
+  const d=doc.data();const e={content:d.content||'',mtime:d.mtime||0,size:(d.content||'').length};fsCache.set(path,e);return e;
+}
+// theo dõi trực tiếp đúng dự án đang mở
+function watchProject(id){
+  const path=id?PROJ_DIR()+'/'+id+'.json':'';
+  if(path===projWatchPath)return; if(projUnsub){projUnsub();projUnsub=null}
+  // bỏ nội dung các dự án khác khỏi bộ nhớ để lần sau đọc bản mới
+  for(const p of [...fsCache.keys()]) if(isProjPath(p)&&p!==path) fsCache.delete(p);
+  projWatchPath=path; if(!path||!fdb)return;
+  projUnsub=fdb.collection('files').doc(docId(path)).onSnapshot(doc=>{
+    if(!doc.exists){fsCache.delete(path);return}
+    const d=doc.data(),old=fsCache.get(path);fsCache.set(path,{content:d.content||'',mtime:d.mtime||0,size:(d.content||'').length});
+    if(old&&d.mtime>old.mtime){try{poll()}catch(e){}}
+  },()=>{});
+}
 const fsNF=()=>Object.assign(new Error('Không tìm thấy'),{name:'NotFoundError'});
 class FsFile{
   constructor(path,optional){this.kind='file';this.path=path;this.name=path.split('/').pop();this.optional=!!optional}
-  async getFile(){const e=fsCache.get(this.path);
+  async getFile(){let e=fsCache.get(this.path);
+    if(!e&&isProjPath(this.path)&&(fsMeta.has(this.path)||!this.optional)) e=await fetchProj(this.path);
     if(!e){if(this.optional)return{lastModified:0,size:0,async text(){return ''}};throw fsNF()}
     return {lastModified:e.mtime,size:e.size,async text(){return e.content}}}
   async createWritable(){let buf='';const self=this;return{async write(x){buf+=x},async close(){
-    const mtime=Math.max(Date.now(),(fsCache.get(self.path)?.mtime||0)+1);
+    const mtime=Math.max(Date.now(),(fsCache.get(self.path)?.mtime||0)+1,(fsMeta.get(self.path)?.mtime||0)+1);
     const rec={path:self.path,dir:self.path.split('/').slice(0,-1).join('/'),content:buf,mtime,by:fbUser?fbUser.uid:''};
-    if(self.path.includes('/projects/')){try{const o=JSON.parse(buf);rec.owner=ownerOf(o)||'';rec.editors=editorsOf(o)}catch(e){rec.owner='';rec.editors=[]}}
+    let o=null;
+    if(isProjPath(self.path)){try{o=JSON.parse(buf);rec.owner=ownerOf(o)||'';rec.editors=editorsOf(o)}catch(e){rec.owner='';rec.editors=[]}}
     await fdb.collection('files').doc(docId(self.path)).set(rec);
-    fsCache.set(self.path,{content:buf,mtime,size:buf.length})}}}
+    fsCache.set(self.path,{content:buf,mtime,size:buf.length});
+    if(o) queueMeta(self.path,projMeta(o,self.path,mtime),mtime)}}}
 }
 class FsDir{
   constructor(path,name){this.kind='directory';this.path=path;this.name=name||path.split('/').pop()}
   async getDirectoryHandle(n){return new FsDir(this.path+'/'+n,n)}
   async getFileHandle(n,o){const f=new FsFile(this.path+'/'+n,o&&o.create);if(!(o&&o.create))await f.getFile();return f}
-  async *entries(){const pre=this.path+'/';const subs=new Set();
+  async *entries(){const pre=this.path+'/';const seen=new Set();
+    if(this.path===PROJ_DIR()){for(const [p] of fsMeta){seen.add(p);yield [p.slice(pre.length),new FsFile(p)]}
+      for(const [p] of fsCache){if(isProjPath(p)&&!seen.has(p))yield [p.slice(pre.length),new FsFile(p)]}return}
+    const subs=new Set();
     for(const [p] of fsCache){if(!p.startsWith(pre))continue;const rest=p.slice(pre.length);
       if(rest.includes('/')){const d=rest.split('/')[0];if(!subs.has(d)){subs.add(d);yield [d,new FsDir(pre+d,d)]}}
-      else yield [rest,new FsFile(p)]}}
-  async removeEntry(n){const p=this.path+'/'+n;await fdb.collection('files').doc(docId(p)).delete();fsCache.delete(p)}
+      else yield [rest,new FsFile(p)]}
+    if(this.path===DATA_ROOT&&fsMeta.size&&!subs.has('projects'))yield ['projects',new FsDir(PROJ_DIR(),'projects')]}
+  async removeEntry(n){const p=this.path+'/'+n;await fdb.collection('files').doc(docId(p)).delete();fsCache.delete(p);
+    if(isProjPath(p)){fsMeta.delete(p);const st=metaPend[p];if(st&&st.timer)clearTimeout(st.timer);delete metaPend[p];try{await fdb.collection('files').doc(docId(metaPathOf(p))).delete()}catch(e){}}}
   async queryPermission(){return 'granted'} async requestPermission(){return 'granted'}
 }
+// danh sách dự án lấy từ thẻ tóm tắt (không cần tải nội dung)
+function metaList(){return [...fsMeta.entries()].map(([p,x])=>({...x.meta,id:p.split('/').pop().replace(/\.json$/,''),mtime:x.mtime}))}
+window.addEventListener('visibilitychange',()=>{if(document.hidden){try{if(dirty)flushSave()}catch(e){}flushMetaAll()}});
+window.addEventListener('pagehide',()=>{flushMetaAll()});
 
 /* ---------------- Trạng thái ---------------- */
 let dirH=null, myName='';
@@ -486,7 +552,7 @@ function watchUsers(){
 }
 async function onAuth(u){
   fbUser=u; clearInterval(window._poll);
-  if(!u){me=null;myName='';if(fsUnsub){fsUnsub();fsUnsub=null}if(usersUnsub){usersUnsub();usersUnsub=null}fsCache.clear();showSignIn();return}
+  if(!u){me=null;myName='';flushMetaAll();if(projUnsub){projUnsub();projUnsub=null;projWatchPath=''}fsMeta.clear();migrated=false;if(fsUnsub){fsUnsub();fsUnsub=null}if(usersUnsub){usersUnsub();usersUnsub=null}fsCache.clear();showSignIn();return}
   setStatus('Đang tải…');
   let d; try{d=await ensureUserDoc(u)}catch(e){centerCard(`<p class="warnbox">Không đọc được tài khoản: ${esc(fbErr(e))}</p><p class="hint">Nếu bạn là quản lý: kiểm tra đã dán “Luật bảo mật” (Firestore → Rules) theo hướng dẫn.</p><p><button id="lo2">Đăng xuất</button></p>`);$('#lo2').onclick=()=>fbAuth.signOut();return}
   me={id:u.uid,...d}; myName=d.ten; renderUserBar();
@@ -548,8 +614,10 @@ function staffDialog(){
   bg.querySelector('#ns_q').oninput=e=>{const q=e.target.value.trim().toLowerCase();bg.querySelectorAll('.nsi').forEach(l=>l.style.display=!q||l.dataset.n.includes(q)?'flex':'none')};
 }
 /* ---- Sao lưu / nhập dữ liệu (quản lý) ---- */
-function backupAll(){
-  const files={};for(const [p,e] of fsCache)files[p]=e.content;
+async function backupAll(){
+  toast('Đang tải toàn bộ dữ liệu…');
+  const files={};for(const [p,e] of fsCache)if(!isProjPath(p))files[p]=e.content;
+  try{const snap=await fdb.collection('files').where('dir','==',PROJ_DIR()).get();snap.docs.forEach(d=>{const x=d.data();if(x.path)files[x.path]=x.content||''})}catch(e){toast('Lỗi tải dữ liệu: '+e.message);return}
   const blob=new Blob([JSON.stringify({kieu:'tong-ke-duong-day-sao-luu',ngay:new Date().toISOString(),files},null,1)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Sao luu tong ke duong day '+new Date().toISOString().slice(0,10)+'.json';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000);
   toast(`Đã tải về ${Object.keys(files).length} file dữ liệu`);
@@ -638,18 +706,7 @@ async function loadCatalog(){
   return false;
 }
 async function loadList(){
-  const pd=await pdir(); const out=[];
-  for await (const [name,h] of pd.entries()){
-    if(h.kind!=='file'||!name.endsWith('.json')) continue;
-    try{
-      const f=await h.getFile(); const c=metaCache[name];
-      if(c&&c.mtime===f.lastModified){out.push(c.meta);continue}
-      const d=JSON.parse(await f.text());
-      const meta={id:name.slice(0,-5),name:d.name,tinh:d.tinh,cdt:d.cdt,gd:d.gd,gc:d.gc,updatedAt:d.updatedAt,updatedBy:d.updatedBy,createdBy:d.createdBy,chuSoHuu:d.chuSoHuu,nhanSu:d.nhanSu,phuTrach:d.phuTrach,trangThai:d.trangThai,han:d.han,isMau:!!d.isMau,len:(d.rows||[]).reduce((s,r)=>s+(r.type==='sec'?0:num(r.kc)),0),nRows:(d.rows||[]).filter(r=>r.type!=='sec'&&(r.cot||r.vt)).length,mtime:f.lastModified};
-      metaCache[name]={mtime:f.lastModified,meta}; out.push(meta);
-    }catch(e){out.push({id:name.slice(0,-5),name:name+' (file lỗi)',broken:true})}
-  }
-  projects=out.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  projects=metaList().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
   renderList();
   if(curId){const p=projects.find(p=>p.id===curId); if(p){renderHead()} else if(!dirty&&!saving){toast('Dự án đã bị xoá bởi người khác');closeProject()}}
 }
@@ -955,10 +1012,11 @@ function projectForm(p){
 }
 
 /* ---------------- Mở dự án ---------------- */
-function closeProject(){canWrite=true;curId=null;cur=null;rows=[];rebuildCols();renderDash()}
+function closeProject(){watchProject(null);flushMetaAll();canWrite=true;curId=null;cur=null;rows=[];rebuildCols();renderDash()}
 async function openProject(id){
   if(dirty) await flushSave();
   try{
+    watchProject(id);
     const fh=await (await pdir()).getFileHandle(id+'.json');
     const {data,mtime}=await readJson(fh);
     curId=id; curMtime=mtime; cur={...data,id}; cur.thietBi=normCat(cur.thietBi); rows=normRows(data.rows||[]); delete cur.rows; dirty=false; canWrite=canEditProj(cur); rebuildCols();
@@ -1002,7 +1060,7 @@ async function dupProject(){
 }
 
 /* ---------------- Lưu ---------------- */
-function scheduleSave(){if(cur&&!canWrite){toast(cur.isMau?'Đây là dự án mẫu, chỉ quản lý được sửa – bấm “Tạo dự án từ mẫu này” để làm':'Dự án này không phải của bạn – chỉ xem. Bấm “Nhân bản” để có bản riêng.');return}dirty=true;lastLocalEdit=Date.now();setStatus('Chưa lưu…');clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushSave(),1200)}
+function scheduleSave(){if(cur&&!canWrite){toast(cur.isMau?'Đây là dự án mẫu, chỉ quản lý được sửa – bấm “Tạo dự án từ mẫu này” để làm':'Dự án này không phải của bạn – chỉ xem. Bấm “Nhân bản” để có bản riêng.');return}dirty=true;lastLocalEdit=Date.now();setStatus('Chưa lưu…');clearTimeout(saveTimer);saveTimer=setTimeout(()=>flushSave(),4000)}
 async function flushSave(force){
   clearTimeout(saveTimer);
   if((!dirty&&!force)||!curId) return;
